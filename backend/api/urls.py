@@ -1,9 +1,12 @@
 """
 Routes for the `api` app. Mounted under /api/ by config/urls.py.
 
-Domain resources should be registered on the DefaultRouter below rather than added as
-individual paths -- the router derives the list/detail/create/update/delete URLs from
-a single ViewSet, which keeps routing consistent as the API grows.
+CRUD resources go on the router: register a ViewSet once and it generates
+list/detail/create/update/delete, so there is no per-operation URL to write and
+nothing to drift out of sync.
+
+Non-CRUD operations (auth, actions spanning several models, reports) are explicit
+paths to `@api_view` functions.
 """
 
 from django.urls import include, path
@@ -12,10 +15,16 @@ from rest_framework.routers import DefaultRouter
 from . import views
 
 router = DefaultRouter()
-# Register ViewSets here, e.g.:
-#     router.register(r"studies", views.StudyViewSet, basename="study")
+# Register CRUD ViewSets here, e.g.:
+#     router.register(r"tasks", views.TaskViewSet, basename="task")
 
 urlpatterns = [
     path("health/", views.health, name="health"),
+    # --- Session auth ---
+    path("auth/csrf/", views.csrf_token, name="csrf"),
+    path("auth/login/", views.login_view, name="login"),
+    path("auth/logout/", views.logout_view, name="logout"),
+    path("auth/check/", views.check_session, name="check-session"),
+    # --- Router-generated CRUD ---
     path("", include(router.urls)),
 ]

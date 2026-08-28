@@ -13,7 +13,7 @@ FRONTEND := frontend
 PY := cd $(BACKEND) && uv run
 
 .PHONY: help install dev dev-backend dev-frontend test test-backend test-frontend \
-        test-unit migrate mm shell superuser lint format check clean
+        test-unit migrate mm shell superuser testuser lint format check clean
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -53,6 +53,13 @@ mm:  ## Create migrations from model changes
 
 superuser:  ## Create a Django admin user
 	$(PY) python manage.py createsuperuser
+
+testuser:  ## Create a throwaway login (tester / pw-12345) for exercising auth
+	$(PY) python manage.py shell -c \
+		"from django.contrib.auth.models import User; \
+		 User.objects.filter(username='tester').delete(); \
+		 User.objects.create_user('tester', 'tester@example.com', 'pw-12345'); \
+		 print('created tester / pw-12345')"
 
 shell:  ## Django shell with models loaded
 	$(PY) python manage.py shell

@@ -45,9 +45,46 @@ sit above `CommonMiddleware`, because `CommonMiddleware` can emit redirects and 
 redirect that hasn't passed through `CorsMiddleware` carries no CORS headers — which
 surfaces in the browser as an opaque failure that looks nothing like its cause.
 
+## Layout mirrors the project-manager repo
+
+Structure follows my existing SvelteKit + DRF project so the muscle memory carries
+over:
+
+  * `api/models/`, `api/serializers/`, `api/views/` as packages split by domain, each
+    re-exporting from `__init__.py` so callers import from `api.views` and never need
+    to know which module something lives in.
+  * `src/lib/config.ts` for the API base URL.
+  * `src/lib/api/` with one module per resource, imported as `$lib/api`.
+  * Django session auth with a CSRF token echoed in `X-CSRFToken`.
+  * `+page.server.ts` load functions for data needed on first paint.
+
+Four things were deliberately *not* carried over, and each is a considered change
+rather than an oversight:
+
+**CSRF is fetched once, not per write.** The older code called `getCsrf()` before
+every mutating request, and redefined that helper in each API module. The token is
+stable for the session, so `client.ts` fetches it once, caches it, reads it from the
+cookie when possible, and clears it on logout (Django rotates it when the session
+changes). That halves the round trips on every write and removes the duplication.
+
+**Responses are checked before being parsed.** The older code did `return await
+res.json()` with no status check, so a 400 or 500 flowed on as if it were data and
+surfaced later as a confusing undefined. Failures now raise `ApiError`.
+
+**CRUD goes on a router, not one URL per verb.** The older API used RPC-style paths
+(`/tasks/add/`, `/tasks/delete/`, POST for everything). ViewSets on a `DefaultRouter`
+generate the standard REST URLs from one registration, so there is less to write and
+the HTTP verbs mean what they normally mean. `@api_view` functions are still the right
+tool for non-CRUD operations — auth, actions spanning models, reports — and the auth
+endpoints use them.
+
+**Responses go through serializers.** Some older views built response dicts by hand
+in a comprehension. That drifts out of sync with the model silently and gives no
+validation on input.
+
 ## One API client module
 
-Every request goes through `frontend/src/lib/api.ts`. Cross-cutting concerns — JSON
+Every request goes through `frontend/src/lib/api/client.ts`. Cross-cutting concerns — JSON
 encoding, error handling, query-string building, and later auth headers — are
 implemented once. Adding a bearer token is a change to one file rather than to every
 component that fetches.
@@ -64,6 +101,20 @@ Two details worth noting:
 `PAGE_SIZE: 20` is set globally in `REST_FRAMEWORK` rather than per-view. Opting in
 per-view is easy to forget, and an unpaginated list endpoint that works fine against
 20 rows falls over at 20,000. The default is the safe direction to fail in.
+
+## Auth
+
+Django session auth rather than JWT. The session cookie is set by Django, marked
+HttpOnly, and sent by the browser automatically — so there is no token for frontend
+code to store, and none for an XSS bug to read. The cost is CSRF: unsafe methods must
+echo the `csrftoken` cookie in an `X-CSRFToken` header, which `client.ts` does for
+every non-GET automatically.
+
+DRF defaults to `IsAuthenticated`, so endpoints are private unless they opt out with
+`@permission_classes([AllowAny])`. Forgetting the decorator produces a 403 rather than
+a data leak — the safe direction to fail in.
+
+`make testuser` creates `tester` / `pw-12345` for exercising the flow by hand.
 
 ## Testing
 

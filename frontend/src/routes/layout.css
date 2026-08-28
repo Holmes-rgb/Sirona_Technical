@@ -3,6 +3,14 @@
 @import 'shadcn-svelte/tailwind.css';
 @import '@fontsource-variable/inter';
 
+/* Installed and available, but deliberately not enabled.
+   @tailwindcss/forms restyles native form controls, which fights shadcn's own input
+   and select styling -- enable it only when building forms without shadcn components.
+   @tailwindcss/typography is worth enabling for long-form prose or rendered markdown;
+   apply it with the `prose` class. */
+/* @plugin "@tailwindcss/forms"; */
+/* @plugin "@tailwindcss/typography"; */
+
 @custom-variant dark (&:is(.dark *));
 
 :root {

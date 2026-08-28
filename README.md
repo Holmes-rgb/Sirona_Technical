@@ -23,6 +23,7 @@ server is needed — the project uses SQLite.
 | `make dev` | Both servers, one terminal |
 | `make test` | pytest + vitest |
 | `make mm` / `make migrate` | Create / apply migrations |
+| `make testuser` | Create a throwaway login for testing auth |
 | `make check` | Django checks + Svelte type checking |
 | `make lint` / `make format` | Frontend linting and formatting |
 
@@ -30,13 +31,36 @@ server is needed — the project uses SQLite.
 
 ```
 backend/
-  config/      Django project: settings, root URLs
-  api/         Application code: models, serializers, views, urls, tests
+  config/            Django project: settings, root URLs
+  api/
+    models/          One module per domain area, re-exported from __init__.py
+    serializers/     Validation and JSON shaping
+    views/           health.py, auth.py — one module per domain area
+    tests/           Mirrors views/
+    urls.py          Router for CRUD, explicit paths for everything else
 frontend/
-  src/lib/api.ts            Every HTTP call goes through here
+  src/lib/config.ts         API base URL
+  src/lib/api/
+    client.ts               HTTP core: errors, CSRF, credentials
+    auth.ts                 Resource module — the template for new ones
+    index.ts                Re-exports; components import from '$lib/api'
   src/lib/components/ui/    shadcn-svelte components
   src/routes/               Pages (SvelteKit file-based routing)
 ```
+
+## Authentication
+
+Django session auth. `make testuser` creates `tester` / `pw-12345`.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/auth/csrf/` | Issues the CSRF token; call once on startup |
+| `POST /api/auth/login/` | Sign in |
+| `POST /api/auth/logout/` | Sign out |
+| `GET /api/auth/check/` | Current session (200 either way) |
+
+The frontend never handles CSRF by hand — `src/lib/api/client.ts` attaches the token
+to every unsafe request and caches it for the session.
 
 ## How the two halves connect
 

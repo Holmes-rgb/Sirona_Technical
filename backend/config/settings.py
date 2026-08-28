@@ -186,6 +186,19 @@ REST_FRAMEWORK = {
 
     # Return timestamps as ISO-8601, which JavaScript's Date can parse directly.
     'DATETIME_FORMAT': 'iso-8601',
+
+    # Session auth: Django sets an HttpOnly cookie the browser sends automatically,
+    # so there is no token for frontend code to store -- and none for an XSS bug to
+    # steal. The cost is that unsafe methods need a CSRF token (see api/views/auth.py).
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+
+    # Endpoints are private unless they opt out with @permission_classes([AllowAny]).
+    # Defaulting to closed means forgetting the decorator produces a 403, not a leak.
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
 }
 
 
@@ -211,3 +224,28 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
 ]
+
+
+# --------------------------------------------------------------------------------
+# Session and CSRF cookies
+# --------------------------------------------------------------------------------
+# Through the Vite proxy the frontend and API share an origin, so 'Lax' is sufficient
+# and the cookies simply work. 'Lax' also blocks the cross-site request forgery this
+# is guarding against in the first place.
+#
+# If the frontend is ever served from a genuinely different origin, these must become
+# SAMESITE='None' with SECURE=True -- and browsers reject SameSite=None over plain
+# HTTP, so that setup requires HTTPS even locally. Avoiding that is a large part of
+# why the proxy is worth having.
+SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SAMESITE = 'Lax'
+
+# Cookies must travel over plain HTTP in local development; production sets these to
+# True via DJANGO_SECURE_COOKIES=1.
+_SECURE_COOKIES = os.environ.get('DJANGO_SECURE_COOKIES', '0') == '1'
+SESSION_COOKIE_SECURE = _SECURE_COOKIES
+CSRF_COOKIE_SECURE = _SECURE_COOKIES
+
+# The CSRF token must be readable by JavaScript so the client can echo it back in the
+# X-CSRFToken header. This is not the session cookie -- that stays HttpOnly.
+CSRF_COOKIE_HTTPONLY = False

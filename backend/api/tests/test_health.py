@@ -1,9 +1,4 @@
-"""
-API tests.
-
-Uses DRF's APIClient over Django's test client because it handles JSON request bodies
-and content negotiation, which is what the real frontend sends.
-"""
+"""Health endpoint."""
 
 import pytest
 from rest_framework import status
@@ -17,7 +12,7 @@ def client() -> APIClient:
 
 
 def test_health_returns_ok(client: APIClient) -> None:
-    """The health endpoint answers 200 with a JSON body the frontend can parse."""
+    """Answers 200 with a JSON body the frontend can parse, without authentication."""
     response = client.get("/api/health/")
 
     assert response.status_code == status.HTTP_200_OK
