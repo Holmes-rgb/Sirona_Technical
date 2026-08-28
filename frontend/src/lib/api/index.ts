@@ -24,3 +24,5 @@
 
 export { api, ApiError } from './client';
 export type { Paginated, RequestOptions } from './client';
+
+export * from './todos';

@@ -40,9 +40,14 @@ class TodoViewSet(
     # opts out for this resource.
     pagination_class = None
 
-    def create(self, serializer: TodoSerializer) -> None:
+    def perform_create(self, serializer: TodoSerializer) -> None:
         """
         Save the todo, then restore the invariant if it landed under a parent.
+
+        This is `perform_create`, not `create`. DRF's POST handler *is* `create` --
+        overriding that name would shadow the mixin's whole request/response cycle and
+        this method would be handed the request instead of a serializer. `perform_create`
+        is the hook the mixin calls once validation has passed.
 
         Adding an incomplete sub-todo to an already-complete parent has to re-open
         that parent -- otherwise a parent could claim to be done while carrying

@@ -1,84 +1,49 @@
 <!--
-	Scaffold verification page.
+	The todo page.
 
-	Proves the whole stack is wired: Tailwind and the shadcn theme render, a
-	server-side load function reached Django before this page was sent, and a
-	browser-side call reaches it too. This gets replaced by the todo UI.
+	A shell: it owns the store and lays out the pieces. All list behaviour lives in the
+	store, and all rendering in the todo components.
 -->
 <script lang="ts">
-	import { api, ApiError } from '$lib/api';
-	import { Badge } from '$lib/components/ui/badge';
-	import { Button } from '$lib/components/ui/button';
-	import * as Card from '$lib/components/ui/card';
+	import { untrack } from 'svelte';
 
-	// Data returned by +page.server.ts, already resolved when this renders.
+	import * as Card from '$lib/components/ui/card';
+	import AddTodoForm from '$lib/components/todo/AddTodoForm.svelte';
+	import TodoList from '$lib/components/todo/TodoList.svelte';
+	import { createTodoStore } from '$lib/todos/store.svelte';
+
 	let { data } = $props();
 
-	interface Health {
-		status: string;
-	}
-
-	// $state holds the result so the template re-renders when the request settles.
-	// Runes mode is enforced project-wide (see vite.config.ts).
-	let result = $state<string | null>(null);
-	let error = $state<string | null>(null);
-	let loading = $state(false);
-
-	async function checkApi() {
-		loading = true;
-		error = null;
-		result = null;
-
-		try {
-			const health = await api.get<Health>('/health/');
-			result = health.status;
-		} catch (e) {
-			// ApiError means Django answered with an error status. Anything else means
-			// the request never arrived — usually the backend isn't running, which is
-			// a completely different thing to debug.
-			error =
-				e instanceof ApiError
-					? `API responded ${e.status}`
-					: 'Could not reach the API — is the Django server running?';
-		} finally {
-			loading = false;
-		}
-	}
+	// Seeded with the todos the server load already fetched, so the first render is
+	// the real list rather than an empty one that fills in a moment later.
+	//
+	// untrack because this is a one-time handover: from here the store owns the list,
+	// and re-seeding it if `data` changed would throw away every local update.
+	const store = createTodoStore(untrack(() => data.todos));
 </script>
 
-<main class="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-6 p-8">
+<svelte:head><title>Todos</title></svelte:head>
+
+<main class="mx-auto w-full max-w-2xl p-6 sm:p-10">
 	<Card.Root>
 		<Card.Header>
-			<Card.Title>Scaffold check</Card.Title>
-			<Card.Description>
-				SvelteKit + Tailwind + shadcn-svelte on the front, Django REST Framework behind the
-				<code>/api</code> proxy.
-			</Card.Description>
+			<Card.Title>Todos</Card.Title>
+			<Card.Description>Tick every sub-todo and its parent completes itself.</Card.Description>
 		</Card.Header>
 
 		<Card.Content class="flex flex-col gap-4">
-			<!-- Server-side: resolved during SSR, before this HTML was sent. -->
-			<div class="flex items-center gap-3">
-				<span class="text-sm text-muted-foreground">Server-side load:</span>
-				{#if data.apiReachable}
-					<Badge variant="secondary">reached API — {data.apiStatus}</Badge>
-				{:else}
-					<Badge variant="destructive">{data.apiError}</Badge>
-				{/if}
-			</div>
+			{#if data.loadError}
+				<p
+					class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+					role="alert"
+				>
+					{data.loadError}
+				</p>
+			{/if}
 
-			<!-- Browser-side: fetched on click, through the same proxy. -->
-			<div class="flex items-center gap-3">
-				<Button onclick={checkApi} disabled={loading}>
-					{loading ? 'Checking…' : 'Call /api/health/'}
-				</Button>
+			<AddTodoForm placeholder="What needs doing?" onSubmit={(title) => store.add(title)} />
 
-				{#if result}
-					<Badge>API says: {result}</Badge>
-				{:else if error}
-					<Badge variant="destructive">{error}</Badge>
-				{/if}
-			</div>
+			<TodoList {store} />
 		</Card.Content>
 	</Card.Root>
 </main>

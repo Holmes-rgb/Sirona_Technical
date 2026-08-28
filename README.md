@@ -74,7 +74,12 @@ frontend/
   src/lib/config.ts         API base URL
   src/lib/api/
     client.ts               HTTP core: URL building, errors, JSON
+    todos.ts                Todo endpoints and types
     index.ts                Re-exports; components import from '$lib/api'
+  src/lib/todos/
+    operations.ts           Pure list logic — tree building, applying responses
+    store.svelte.ts         Reactive state over the pure functions
+  src/lib/components/todo/  TodoList, TodoItem, AddTodoForm
   src/lib/components/ui/    shadcn-svelte components
   src/routes/               Pages (SvelteKit file-based routing)
 ```
@@ -129,6 +134,42 @@ correct.
 The same reasoning is applied to `DELETE`, which returns `{parent}` for the same
 reason — see the assumptions below.
 
+### How the frontend stays in sync
+
+State holds exactly what the API returns: **one flat array**. Nesting is a `$derived`
+projection built for rendering and never stored
+(`frontend/src/lib/todos/operations.ts`).
+
+That is what makes the no-refetch requirement straightforward. The server reports a
+change by naming the affected rows, so applying a toggle response is two swaps by id:
+
+```ts
+export function applyToggleResponse(todos, { todo, parent }) {
+    const next = replaceTodo(todos, todo);
+    return parent ? replaceTodo(next, parent) : next;
+}
+```
+
+There is no tree to walk and no second copy of the data that could drift from the
+first. Ticking a sub-todo is exactly one `PATCH` and no follow-up `GET`.
+
+The client never computes whether a parent should be complete. That rule lives on the
+server precisely so there is one implementation of it; a copy here would be a second
+one, free to disagree.
+
+Layering keeps the graded logic testable without a browser:
+
+| File | Role |
+| --- | --- |
+| `src/lib/api/todos.ts` | HTTP calls and types |
+| `src/lib/todos/operations.ts` | Pure functions — tree building, applying responses |
+| `src/lib/todos/store.svelte.ts` | Reactive state, thin glue over the two above |
+| `src/lib/components/todo/` | Presentational — no fetching, no rules |
+
+`TodoList` is deliberately **not** recursive. The domain is exactly one level deep and
+the API rejects anything deeper, so a self-rendering component would advertise a
+capability the system does not have.
+
 ## Assumptions
 
 Questions the brief left open, and what was assumed to move forward.
@@ -167,6 +208,25 @@ PATCH for inline title editing safe.
 Assumption: It returns `200` with `{parent}`. This deviates from the REST convention
 deliberately, applying the same principle as toggle: any endpoint that can change a
 parent's state hands that parent back, so the UI never has to refetch.
+
+**Q: What happens if two sub-todos of the same parent are toggled at once?**
+Assumption: last response wins. Each row's checkbox is disabled while its own request
+is in flight, but two *different* sub-todos can be toggled concurrently and their
+responses could arrive out of order, each carrying its own snapshot of the parent.
+Acceptable for a single-user app; the fix is a request sequence number, or refetching
+the parent on conflict.
+
+**Q: The create response returns only the new todo — how does the UI learn the parent
+re-opened?**
+Assumption: it derives it locally. A newly created sub-todo is always incomplete, so a
+completed parent can only become incomplete — deterministic, and it avoids widening the
+create response beyond what the brief specifies. Toggle and delete, where the outcome
+is *not* deterministic, return the parent explicitly.
+
+**Q: Should deleting a todo ask for confirmation?**
+Assumption: no. It keeps the interaction direct for an exercise of this size. A real
+version would confirm before deleting a parent, since that silently removes its
+sub-todos too.
 
 **Q: Flat or nested list?**
 Assumption: Flat. One Todo shape is used by every endpoint — list, create, and both
