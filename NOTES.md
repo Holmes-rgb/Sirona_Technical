@@ -136,6 +136,23 @@ Three implementation details worth being able to defend:
   here; on Postgres the parent row would be locked so two sibling sub-todos toggled
   concurrently can't race on the recalculation.
 
+## The bug worth recounting
+
+The parent-to-children cascade was written correctly and persisted correctly —
+`sub_todos.update(...)` did exactly what it should. But `toggle()` returned `None` for
+a top-level todo, so the response omitted the rows it had just changed. The UI showed a
+ticked parent above unticked sub-todos, and a page reload "fixed" it.
+
+The test passed throughout, because it asserted through `refresh_from_db()`. It proved
+the write happened and said nothing about whether the client was told. **A test that
+reads the database cannot catch a reporting bug.** The tests now assert on the response
+body, and the end-to-end check reloads the page after each step to confirm the server
+agrees with what the UI was already showing — which distinguishes "the client guessed
+right" from "the server said so".
+
+The view's docstring had claimed all along that it "must report everything the
+invariant changed". The fix was making the code true to what it already said.
+
 ## Testing
 
 `pytest-django` with `--reuse-db`, which skips recreating the test database between

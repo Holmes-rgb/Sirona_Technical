@@ -16,7 +16,7 @@
  * result back into `$state` reliably triggers an update.
  */
 
-import type { DeleteResponse, Todo, ToggleResponse } from '$lib/api/todos';
+import type { CreateResponse, DeleteResponse, Todo, ToggleResponse } from '$lib/api/todos';
 
 /** A top-level todo with its sub-todos attached, ready to render. */
 export interface TodoNode extends Todo {
@@ -61,20 +61,53 @@ export function replaceTodo(todos: Todo[], updated: Todo): Todo[] {
 }
 
 /**
+ * Replace several todos at once.
+ *
+ * Indexes the updates by id and makes a single pass, rather than one full pass per
+ * updated row. A cascade can change any number of rows, so chaining replaceTodo would
+ * be O(n x m) on a list that is already O(n) to walk once.
+ *
+ * Updates whose id is not present are ignored -- the list is the authority on what is
+ * currently rendered.
+ */
+export function replaceMany(todos: Todo[], updates: Todo[]): Todo[] {
+	if (updates.length === 0) return todos;
+
+	const byId = new Map(updates.map((todo) => [todo.id, todo]));
+	return todos.map((todo) => byId.get(todo.id) ?? todo);
+}
+
+/**
  * Apply a toggle response to the list.
  *
- * This is the whole "stay in sync without re-fetching" requirement in three lines.
- * Toggling a sub-todo can change two rows -- itself, and its parent if that crossed
- * the all-children-complete threshold -- and the server sends both back in one
- * response. Applying them by id means one request, no follow-up GET, and no need for
- * the client to work out the parent's new state for itself.
+ * This is the whole "stay in sync without re-fetching" requirement.
  *
- * That last point matters: the completion rule lives on the server precisely so there
- * is one implementation of it. Recomputing the parent here would be a second one, free
- * to disagree.
+ * Completion propagates in both directions, so a single toggle can change several
+ * rows: a sub-todo may complete or re-open its parent, and a top-level todo cascades
+ * down to all of its children. The server reports whichever happened, and applying
+ * those rows by id keeps the UI correct in one request with no follow-up GET.
+ *
+ * Nothing here works out *what* should have changed -- only where to put what the
+ * server said. The completion rule lives on the server precisely so there is one
+ * implementation of it; recomputing it here would be a second one, free to disagree.
  */
 export function applyToggleResponse(todos: Todo[], response: ToggleResponse): Todo[] {
-	const next = replaceTodo(todos, response.todo);
+	return replaceMany(todos, [
+		response.todo,
+		...(response.parent ? [response.parent] : []),
+		...response.children
+	]);
+}
+
+/**
+ * Apply a create response: append the new todo, then apply the parent if the server
+ * sent one back.
+ *
+ * A new sub-todo is always incomplete, so creating one re-opens a parent that was
+ * complete. The server reports that rather than leaving the client to infer it.
+ */
+export function applyCreateResponse(todos: Todo[], response: CreateResponse): Todo[] {
+	const next = [...todos, response.todo];
 	return response.parent ? replaceTodo(next, response.parent) : next;
 }
 

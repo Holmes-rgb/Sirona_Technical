@@ -9,10 +9,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Todo } from '$lib/api/todos';
 import {
+	applyCreateResponse,
 	applyDeleteResponse,
 	applyToggleResponse,
 	buildTree,
 	removeTodoAndChildren,
+	replaceMany,
 	replaceTodo
 } from './operations';
 
@@ -85,7 +87,8 @@ describe('applyToggleResponse', () => {
 	it('updates the toggled sub-todo', () => {
 		const next = applyToggleResponse(list, {
 			todo: { ...milk, completed: true },
-			parent: { ...parent, completed: false }
+			parent: { ...parent, completed: false },
+			children: []
 		});
 
 		expect(next.find((t) => t.id === 2)?.completed).toBe(true);
@@ -96,7 +99,8 @@ describe('applyToggleResponse', () => {
 		// parent, and one response carries both changes.
 		const next = applyToggleResponse(list, {
 			todo: { ...eggs, completed: true },
-			parent: { ...parent, completed: true }
+			parent: { ...parent, completed: true },
+			children: []
 		});
 
 		expect(next.find((t) => t.id === 3)?.completed).toBe(true);
@@ -112,7 +116,8 @@ describe('applyToggleResponse', () => {
 
 		const next = applyToggleResponse(completed, {
 			todo: { ...milk, completed: false },
-			parent: { ...parent, completed: false }
+			parent: { ...parent, completed: false },
+			children: []
 		});
 
 		expect(next.find((t) => t.id === 1)?.completed).toBe(false);
@@ -121,19 +126,109 @@ describe('applyToggleResponse', () => {
 	it('handles a null parent when a top-level todo is toggled', () => {
 		const next = applyToggleResponse(list, {
 			todo: { ...unrelated, completed: true },
-			parent: null
+			parent: null,
+			children: []
 		});
 
 		expect(next.find((t) => t.id === 4)?.completed).toBe(true);
 	});
 
+	it('applies every child when toggling a parent cascades down', () => {
+		// The direction that was previously broken: the server cascaded and persisted
+		// the children, but the response omitted them, so the UI showed a ticked parent
+		// above unticked sub-todos until the page was reloaded.
+		const next = applyToggleResponse(list, {
+			todo: { ...parent, completed: true },
+			parent: null,
+			children: [
+				{ ...milk, completed: true },
+				{ ...eggs, completed: true }
+			]
+		});
+
+		expect(next.find((t) => t.id === 1)?.completed).toBe(true);
+		expect(next.find((t) => t.id === 2)?.completed).toBe(true);
+		expect(next.find((t) => t.id === 3)?.completed).toBe(true);
+		expect(next.find((t) => t.id === 4)).toBe(unrelated);
+	});
+
+	it('applies the cascade in reverse when a parent is unticked', () => {
+		const allDone = [
+			{ ...parent, completed: true },
+			{ ...milk, completed: true },
+			{ ...eggs, completed: true }
+		];
+
+		const next = applyToggleResponse(allDone, {
+			todo: { ...parent, completed: false },
+			parent: null,
+			children: [milk, eggs]
+		});
+
+		expect(next.every((t) => t.completed === false)).toBe(true);
+	});
+
 	it('leaves unrelated todos untouched', () => {
 		const next = applyToggleResponse(list, {
 			todo: { ...milk, completed: true },
-			parent: { ...parent, completed: false }
+			parent: { ...parent, completed: false },
+			children: []
 		});
 
 		expect(next.find((t) => t.id === 4)).toBe(unrelated);
+	});
+});
+
+describe('replaceMany', () => {
+	it('applies several updates in a single pass', () => {
+		const next = replaceMany(list, [
+			{ ...milk, completed: true },
+			{ ...eggs, completed: true }
+		]);
+
+		expect(next.find((t) => t.id === 2)?.completed).toBe(true);
+		expect(next.find((t) => t.id === 3)?.completed).toBe(true);
+		expect(next.find((t) => t.id === 4)).toBe(unrelated);
+	});
+
+	it('ignores updates for ids not in the list', () => {
+		// The list is the authority on what is currently rendered.
+		expect(replaceMany(list, [todo(999)])).toEqual(list);
+	});
+
+	it('returns the same list when there is nothing to apply', () => {
+		expect(replaceMany(list, [])).toBe(list);
+	});
+});
+
+describe('applyCreateResponse', () => {
+	it('appends the created todo', () => {
+		const created = todo(5, { title: 'Bread', parentId: 1 });
+
+		const next = applyCreateResponse(list, { todo: created, parent: parent });
+
+		expect(next.at(-1)).toEqual(created);
+	});
+
+	it('applies the re-opened parent the server returned', () => {
+		// A new sub-todo is always incomplete, so it re-opens a completed parent --
+		// and the client applies that rather than working it out.
+		const completedParent = { ...parent, completed: true };
+		const before = [completedParent, { ...milk, completed: true }];
+
+		const next = applyCreateResponse(before, {
+			todo: todo(5, { title: 'Bread', parentId: 1 }),
+			parent: { ...parent, completed: false }
+		});
+
+		expect(next.find((t) => t.id === 1)?.completed).toBe(false);
+	});
+
+	it('leaves the list alone when no parent comes back', () => {
+		const next = applyCreateResponse(list, { todo: todo(5), parent: null });
+
+		expect(next).toHaveLength(list.length + 1);
+		expect(next.find((t) => t.id === 1)).toBe(parent);
 	});
 });
 

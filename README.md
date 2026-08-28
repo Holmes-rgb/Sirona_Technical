@@ -93,7 +93,7 @@ backend/
     urls.py                 DefaultRouter for CRUD, explicit paths otherwise
     admin.py                Todo registered for inspecting rows in /admin/
     migrations/0001_initial.py
-    tests/test_todos.py     15 tests, mostly about the invariant
+    tests/test_todos.py     19 tests, mostly about the invariant
 ```
 
 Each of `models/`, `serializers/`, `views/` and `tests/` is a **package with one
@@ -127,7 +127,7 @@ frontend/
         index.ts            Re-exports; components import from '$lib/api'
       todos/
         operations.ts       ★ Pure list logic — tree building, applying responses
-        operations.spec.ts  16 unit tests, Node only
+        operations.spec.ts  24 unit tests, Node only
         store.svelte.ts     Reactive state; thin glue over the two above
       components/
         todo/TodoList.svelte    Renders the derived tree
@@ -168,7 +168,7 @@ the user ticks "Eggs".
 | 8 | `views/todos.py` | Loads the todo, calls `todo.toggle()`. Decides nothing itself. |
 | 9 | `models/todos.py` | **In a transaction:** flips `completed`; sees it is a sub-todo; calls `parent.recalculate_completed()`. |
 | 10 | `models/todos.py` | One `EXISTS` query finds no incomplete siblings → saves the parent complete, returns it. |
-| 11 | `views/todos.py` | Serializes both into `{"todo": …, "parent": …}`. |
+| 11 | `views/todos.py` | Serialises into `{"todo": …, "parent": …, "children": []}` — here the parent flipped, so `children` is empty. |
 | 12 | `store.svelte.ts` | Hands the response to `applyToggleResponse`. |
 | 13 | `todos/operations.ts` | Two swaps by id in the flat array; returns a new array. |
 | 14 | `store.svelte.ts` | Assigning to `$state` invalidates the `$derived` tree. |
@@ -181,9 +181,9 @@ complete — step 10 did, and step 11 reported it.
 
 | Suite | Location | Covers |
 | --- | --- | --- |
-| Backend | `backend/api/tests/test_todos.py` | 15 tests — the invariant and its edge cases |
+| Backend | `backend/api/tests/test_todos.py` | 19 tests — the invariant, both directions, and what gets reported |
 | Backend | `backend/api/tests/test_health.py` | 1 test — liveness |
-| Frontend | `frontend/src/lib/todos/operations.spec.ts` | 16 tests — tree building, applying responses |
+| Frontend | `frontend/src/lib/todos/operations.spec.ts` | 24 tests — tree building, applying responses |
 | Frontend | `frontend/src/lib/api/client.spec.ts` | 7 tests — URL building, error handling |
 
 The brief asks for three backend tests. The extra ones cover behaviour the invariant
@@ -199,8 +199,8 @@ redirects a GET without one, but **not** a POST or PATCH carrying a body.
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/todos/` | All todos, flat array, parents and sub-todos together |
-| `POST /api/todos/` | Create; `{"title": "...", "parentId": null \| id}` |
-| `PATCH /api/todos/{id}/toggle/` | Flip completion; returns `{todo, parent}` |
+| `POST /api/todos/` | Create; `{"title": "...", "parentId": null \| id}`; returns `{todo, parent}` |
+| `PATCH /api/todos/{id}/toggle/` | Flip completion; returns `{todo, parent, children}` |
 | `PATCH /api/todos/{id}/` | Rename (title only — `completed` is read-only) |
 | `DELETE /api/todos/{id}/` | Delete; returns `{parent}` |
 | `GET /api/health/` | Liveness probe |
@@ -220,26 +220,40 @@ The views stay thin: translate HTTP to a domain call, shape the response.
 
 ### How the toggle response is shaped, and why
 
-`PATCH /api/todos/{id}/toggle/` returns both objects:
+Completion propagates **both ways**, so one toggle can change several rows. The
+response names whichever direction it went:
 
 ```json
-{
-  "todo":   { "id": 2, "title": "Milk", "completed": true, "parentId": 1 },
-  "parent": { "id": 1, "title": "Groceries", "completed": true, "parentId": null }
-}
+// a sub-todo was ticked — it completed its parent
+{ "todo":     { "id": 2, "title": "Milk", "completed": true, "parentId": 1 },
+  "parent":   { "id": 1, "title": "Groceries", "completed": true, "parentId": null },
+  "children": [] }
+
+// the parent was ticked — the cascade ran downwards
+{ "todo":     { "id": 1, "title": "Groceries", "completed": true, "parentId": null },
+  "parent":   null,
+  "children": [ { "id": 2, "completed": true, ... },
+                { "id": 3, "completed": true, ... } ] }
 ```
 
-`parent` is `null` when the toggled todo is top-level.
+The unused side comes back `null` or `[]` rather than missing, so there is one shape
+for the client to handle.
 
-Toggling one sub-todo can change two rows, so a response carrying only the toggled
-todo would leave the client knowingly stale — it would have to either refetch the whole
-list or recompute the parent itself, and recomputing is exactly the duplication that
-lets client and server disagree. Since the server owns the invariant, it also has to
-report everything the invariant changed. One request, one response, both checkboxes
-correct.
+A response carrying only the toggled todo would leave the client knowingly stale — it
+would have to refetch the list or recompute the rest itself, and recomputing is exactly
+the duplication that lets client and server disagree. Since the server owns the
+invariant, it also has to report everything the invariant changed.
 
-The same reasoning is applied to `DELETE`, which returns `{parent}` for the same
-reason — see the assumptions below.
+The same rule applies to `DELETE`, which returns `{parent}`, and to `POST`, which
+returns `{todo, parent}` because creating an incomplete sub-todo re-opens a completed
+parent. **Any endpoint that changes a row other than the one addressed hands that row
+back**, so the UI never refetches and never guesses.
+
+> This was the source of a real bug. The parent-to-children cascade wrote to the
+> database correctly but was left out of the response, so the UI showed a ticked parent
+> above unticked sub-todos until the page was reloaded. The test missed it because it
+> asserted on the database via `refresh_from_db()` — it checked persistence, not
+> reporting. The tests now assert on the response body.
 
 ### How the frontend stays in sync
 
@@ -251,14 +265,17 @@ That is what makes the no-refetch requirement straightforward. The server report
 change by naming the affected rows, so applying a toggle response is two swaps by id:
 
 ```ts
-export function applyToggleResponse(todos, { todo, parent }) {
-    const next = replaceTodo(todos, todo);
-    return parent ? replaceTodo(next, parent) : next;
+export function applyToggleResponse(todos, { todo, parent, children }) {
+    return replaceMany(todos, [todo, ...(parent ? [parent] : []), ...children]);
 }
 ```
 
+`replaceMany` indexes the updates by id and makes one pass — a cascade can change any
+number of rows, so chaining single replacements would be O(n × m).
+
 There is no tree to walk and no second copy of the data that could drift from the
-first. Ticking a sub-todo is exactly one `PATCH` and no follow-up `GET`.
+first. Ticking a checkbox — in either direction — is exactly one `PATCH` and no
+follow-up `GET`.
 
 The client never computes whether a parent should be complete. That rule lives on the
 server precisely so there is one implementation of it; a copy here would be a second
@@ -316,12 +333,20 @@ responses could arrive out of order, each carrying its own snapshot of the paren
 Acceptable for a single-user app; the fix is a request sequence number, or refetching
 the parent on conflict.
 
-**Q: The create response returns only the new todo — how does the UI learn the parent
-re-opened?**
-Assumption: it derives it locally. A newly created sub-todo is always incomplete, so a
-completed parent can only become incomplete — deterministic, and it avoids widening the
-create response beyond what the brief specifies. Toggle and delete, where the outcome
-is *not* deterministic, return the parent explicitly.
+**Q: How does the client learn about rows changed other than the one it addressed?**
+Assumption: the response tells it, always. `toggle` returns `{todo, parent, children}`,
+`create` returns `{todo, parent}`, `delete` returns `{parent}`. The brief specifies
+only the toggle case and says create "returns the created todo", so create and delete
+are deviations — taken so that one rule holds everywhere: **any endpoint that changes
+a row other than the one addressed hands that row back**. The alternative is a client
+that infers what the server did, which is the duplication this design avoids
+throughout. After this there is no place in the frontend that reasons about completion.
+
+**Q: Toggling a parent cascades to its children — how is that reported?**
+Assumption: in a `children` array on the toggle response, empty when the toggle went
+the other way. The cascade is itself an assumption (above), so reporting it belongs to
+the same one. Without it the database and the UI disagree until a reload — which is
+exactly what happened before this was added.
 
 **Q: Should deleting a todo ask for confirmation?**
 Assumption: no. It keeps the interaction direct for an exercise of this size. A real

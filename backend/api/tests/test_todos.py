@@ -123,11 +123,59 @@ def test_toggling_a_parent_cascades_to_its_sub_todos(client, parent, two_subs):
     """
     milk, eggs = two_subs
 
-    toggle(client, parent)
+    body = toggle(client, parent).json()
 
     milk.refresh_from_db()
     eggs.refresh_from_db()
     assert (milk.completed, eggs.completed) == (True, True)
+
+    # The database being right is only half of it. This assertion is the half that was
+    # missing: the endpoint has to *report* the rows it changed, or the UI cannot show
+    # them without refetching the list.
+    assert {child["id"] for child in body["children"]} == {milk.id, eggs.id}
+    assert all(child["completed"] for child in body["children"])
+
+
+def test_untoggling_a_parent_reopens_its_sub_todos(client, parent, two_subs):
+    """The cascade runs in both directions, and reports both."""
+    milk, eggs = two_subs
+    toggle(client, parent)
+
+    body = toggle(client, parent).json()
+
+    milk.refresh_from_db()
+    eggs.refresh_from_db()
+    assert (milk.completed, eggs.completed) == (False, False)
+    assert all(child["completed"] is False for child in body["children"])
+
+
+def test_toggling_a_childless_todo_reports_nothing_else(client, parent):
+    """Nothing else changed, so both sides come back empty rather than absent."""
+    body = toggle(client, parent).json()
+
+    assert body["todo"]["completed"] is True
+    assert body["parent"] is None
+    assert body["children"] == []
+
+
+def test_toggling_a_sub_todo_reports_a_parent_and_no_children(client, parent, two_subs):
+    """
+    A sub-todo has no children of its own, so the cascade side is empty. The shape is
+    the same either way, which keeps the client's handling uniform.
+    """
+    milk, _ = two_subs
+
+    body = toggle(client, milk).json()
+
+    assert body["parent"]["id"] == parent.id
+    assert body["children"] == []
+
+
+def test_creating_a_top_level_todo_reports_no_parent(client):
+    body = client.post("/api/todos/", {"title": "Laundry"}, format="json").json()
+
+    assert body["todo"]["title"] == "Laundry"
+    assert body["parent"] is None
 
 
 # -- Edge cases the invariant implies --------------------------------------------
@@ -140,10 +188,12 @@ def test_adding_an_incomplete_sub_todo_reopens_a_completed_parent(client, parent
     parent.refresh_from_db()
     assert parent.completed is True
 
-    client.post("/api/todos/", {"title": "Eggs", "parentId": parent.id}, format="json")
+    response = client.post("/api/todos/", {"title": "Eggs", "parentId": parent.id}, format="json")
 
     parent.refresh_from_db()
     assert parent.completed is False
+    # Reported, not just persisted -- otherwise the UI could only find out by refetching.
+    assert response.json()["parent"]["completed"] is False
 
 
 def test_deleting_the_last_incomplete_sub_todo_completes_the_parent(client, parent, two_subs):
@@ -198,9 +248,10 @@ def test_create_top_level_todo(client):
 
     assert response.status_code == status.HTTP_201_CREATED
     body = response.json()
-    assert body["title"] == "Groceries"
-    assert body["parentId"] is None
-    assert body["completed"] is False
+    assert body["todo"]["title"] == "Groceries"
+    assert body["todo"]["parentId"] is None
+    assert body["todo"]["completed"] is False
+    assert body["parent"] is None, "a top-level todo has no parent to report"
 
 
 def test_create_rejects_a_parent_that_does_not_exist(client):
@@ -220,7 +271,7 @@ def test_completed_cannot_be_set_through_create_or_update(client, parent):
         {"title": "Sneaky", "parentId": None, "completed": True},
         format="json",
     ).json()
-    assert created["completed"] is False
+    assert created["todo"]["completed"] is False
 
     updated = client.patch(
         f"/api/todos/{parent.id}/",

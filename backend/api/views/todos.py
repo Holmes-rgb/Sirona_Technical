@@ -44,10 +44,14 @@ class TodoViewSet(
         """
         Save the todo, then restore the invariant if it landed under a parent.
 
-        This is `perform_create`, not `create`. DRF's POST handler *is* `create` --
-        overriding that name would shadow the mixin's whole request/response cycle and
-        this method would be handed the request instead of a serializer. `perform_create`
-        is the hook the mixin calls once validation has passed.
+        This is `perform_create`, not `create`: two different hooks with different
+        signatures, and confusing them is a real trap. `create` is DRF's POST handler
+        and takes the request; `perform_create` is the hook it calls once validation
+        has passed, and takes a serializer. Naming this one `create` would shadow the
+        whole request/response cycle and hand it the wrong object.
+
+        The split is also useful: this method decides what happens to the *data*, and
+        `create` below decides what the *client is told*.
 
         Adding an incomplete sub-todo to an already-complete parent has to re-open
         that parent -- otherwise a parent could claim to be done while carrying
@@ -57,24 +61,65 @@ class TodoViewSet(
         if todo.parent is not None:
             todo.parent.recalculate_completed()
 
-    @action(detail=True, methods=["patch"], url_path="toggle")
-    def toggle(self, request: Request, pk: str | None = None) -> Response:
+    def create(self, request: Request, *args, **kwargs) -> Response:
         """
-        PATCH /api/todos/{id}/toggle/ -- flip completion state.
+        POST /api/todos/ -- create a todo, or a sub-todo when parentId is given.
 
-        Returns both the toggled todo and its parent (null for a top-level todo), so
-        the client can update a sub-todo's checkbox *and* its parent's from a single
-        response, with no follow-up request and no refetch of the whole list. That
-        shape is the whole point: the server owns the invariant, so it must also
-        report everything the invariant changed.
+        Returns `{"todo": ..., "parent": ... | null}`.
+
+        The brief specifies just the created todo, but creating a sub-todo can change a
+        second row: an incomplete child re-opens a completed parent. Returning only the
+        new todo would leave the client to work that out for itself, which is the one
+        thing this design avoids everywhere else. It is reported here for the same
+        reason toggle and delete report it. See the README assumptions.
+
+        Mirrors CreateModelMixin.create, delegating the actual work to perform_create
+        so the domain behaviour stays in one place.
         """
-        todo = self.get_object()
-        parent = todo.toggle()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+
+        todo = serializer.instance
+
+        # perform_create already recalculated this parent, and Django caches the FK
+        # object on the todo, so this is the updated instance rather than a stale read.
+        parent = todo.parent
 
         return Response(
             {
                 "todo": self.get_serializer(todo).data,
                 "parent": self.get_serializer(parent).data if parent else None,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["patch"], url_path="toggle")
+    def toggle(self, request: Request, pk: str | None = None) -> Response:
+        """
+        PATCH /api/todos/{id}/toggle/ -- flip completion state.
+
+        Completion propagates in both directions, and the response names whichever
+        happened:
+
+          * toggling a sub-todo may complete or re-open its `parent`
+          * toggling a top-level todo cascades down to its `children`
+
+        The unused side is null or empty rather than absent, so the client always
+        handles the same shape.
+
+        That is the whole point of this endpoint: the server owns the invariant, so it
+        must also report everything the invariant changed. A row changed but not
+        reported is a row the UI can only discover by refetching.
+        """
+        todo = self.get_object()
+        result = todo.toggle()
+
+        return Response(
+            {
+                "todo": self.get_serializer(todo).data,
+                "parent": self.get_serializer(result.parent).data if result.parent else None,
+                "children": self.get_serializer(result.children, many=True).data,
             }
         )
 

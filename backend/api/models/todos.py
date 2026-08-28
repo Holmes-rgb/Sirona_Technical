@@ -19,8 +19,28 @@ the frontend. The reasoning matters more than the placement:
     management command, or a test.
 """
 
+from typing import NamedTuple
+
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
+
+
+class ToggleResult(NamedTuple):
+    """
+    Every row a toggle changed *other than* the toggled todo itself.
+
+    Toggling propagates in both directions, and the caller cannot know which happened
+    without being told:
+
+      * a sub-todo may complete or re-open its `parent`
+      * a top-level todo cascades down to its `children`
+
+    Naming both means the endpoint can report exactly what moved, and the client never
+    has to work it out.
+    """
+
+    parent: "Todo | None"
+    children: "list[Todo]"
 
 
 class Todo(models.Model):
@@ -114,12 +134,13 @@ class Todo(models.Model):
         return True
 
     @transaction.atomic
-    def toggle(self) -> "Todo | None":
+    def toggle(self) -> ToggleResult:
         """
         Flip this todo's completed state and restore the invariant around it.
 
-        Returns the affected parent, or None if there wasn't one -- which is exactly
-        what the toggle endpoint needs to hand back to the client.
+        Returns a ToggleResult naming every *other* row this changed, which is what the
+        endpoint hands back to the client. Reporting is part of the job: a change the
+        caller is not told about is one the UI cannot show without refetching.
 
         Two cases:
 
@@ -147,8 +168,13 @@ class Todo(models.Model):
         if self.is_sub_todo:
             parent = self.parent
             parent.recalculate_completed()
-            return parent
+            return ToggleResult(parent=parent, children=[])
 
         # A single UPDATE for all children rather than a save() each -- no N+1.
         self.sub_todos.update(completed=self.completed)
-        return None
+
+        # Re-read them. `.update()` is a bulk SQL UPDATE: it returns a row count, not
+        # objects, and leaves any Python copies holding their old values. Serialising
+        # without this would report the children's *previous* state -- which is exactly
+        # the bug this method's return type exists to prevent.
+        return ToggleResult(parent=None, children=list(self.sub_todos.all()))

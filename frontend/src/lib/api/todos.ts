@@ -21,13 +21,30 @@ export interface Todo {
 }
 
 /**
- * Toggling one sub-todo can change two rows: the sub-todo, and its parent if that
- * crossed the "all children complete" threshold. The server returns both so the UI
- * can update each without refetching the list.
+ * Completion propagates in both directions, so a toggle can change more than the todo
+ * that was clicked. The server reports whichever happened:
  *
- * `parent` is null when the toggled todo was top-level.
+ *   - toggling a sub-todo may complete or re-open its `parent`
+ *   - toggling a top-level todo cascades down to its `children`
+ *
+ * The unused side comes back null or empty rather than missing, so there is one shape
+ * to handle. Between them these cover every row the request changed, which is what
+ * makes updating the UI possible without refetching the list.
  */
 export interface ToggleResponse {
+	todo: Todo;
+	parent: Todo | null;
+	children: Todo[];
+}
+
+/**
+ * Creating a sub-todo can change a second row: a new child is always incomplete, so it
+ * re-opens a parent that was complete. The server returns that parent for the same
+ * reason toggle returns what it changed.
+ *
+ * `parent` is null when the created todo is top-level.
+ */
+export interface CreateResponse {
 	todo: Todo;
 	parent: Todo | null;
 }
@@ -52,7 +69,7 @@ export function createTodo(
 	parentId: number | null = null,
 	options?: RequestOptions
 ) {
-	return api.post<Todo>('/todos/', { title, parentId }, options);
+	return api.post<CreateResponse>('/todos/', { title, parentId }, options);
 }
 
 /**

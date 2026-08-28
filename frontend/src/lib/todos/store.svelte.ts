@@ -24,6 +24,7 @@ import {
 	type Todo
 } from '$lib/api/todos';
 import {
+	applyCreateResponse,
 	applyDeleteResponse,
 	applyToggleResponse,
 	buildTree,
@@ -92,22 +93,15 @@ export function createTodoStore(initial: Todo[] = []) {
 			}
 		},
 
-		/** Create a todo, or a sub-todo when `parentId` is given. */
+		/**
+		 * Create a todo, or a sub-todo when `parentId` is given.
+		 *
+		 * The response carries the parent too when creating a sub-todo re-opened one,
+		 * so this applies what the server reported rather than inferring it.
+		 */
 		async add(title: string, parentId: number | null = null) {
 			try {
-				const created = await createTodo(title, parentId);
-				todos = [...todos, created];
-
-				// Adding an incomplete sub-todo re-opens a completed parent. The server
-				// has already done that; the create response only carries the new todo,
-				// so reflect it locally. It is deterministic -- a new sub-todo is always
-				// incomplete, so its parent can only become incomplete.
-				if (created.parentId !== null) {
-					const parent = todos.find((todo) => todo.id === created.parentId);
-					if (parent?.completed) {
-						todos = replaceTodo(todos, { ...parent, completed: false });
-					}
-				}
+				todos = applyCreateResponse(todos, await createTodo(title, parentId));
 			} catch (error) {
 				toast.error(describe(error, 'Could not add todo'));
 			}
@@ -116,9 +110,10 @@ export function createTodoStore(initial: Todo[] = []) {
 		/**
 		 * Flip a todo's completed state.
 		 *
-		 * The response carries both the toggled todo and its recalculated parent, so
-		 * one request updates every row that changed -- no follow-up fetch, and no
-		 * reimplementation of the completion rule on the client.
+		 * The response carries every row the toggle changed -- the todo itself, its
+		 * parent if that flipped, and its children if the toggle cascaded down. One
+		 * request updates all of them: no follow-up fetch, and no reimplementation of
+		 * the completion rule on the client.
 		 */
 		async toggle(id: number) {
 			await withPending(id, async () => {
