@@ -1,0 +1,21 @@
+[project]
+name = "backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "django==6.1",
+    "django-cors-headers==4.9.0",
+    "django-filter==26.1",
+    "djangorestframework==3.18.0",
+    "pytest>=9.1.1",
+    "pytest-django==4.14.0",
+]
+
+[tool.pytest.ini_options]
+# pytest-django needs to know which settings module to boot Django with.
+DJANGO_SETTINGS_MODULE = "config.settings"
+# Treat any test_*.py under the app as a test module (Django's default is tests.py).
+python_files = ["test_*.py", "tests.py"]
+# -q keeps output readable; --reuse-db skips teardown/recreation of the test database
+# between runs, which is the difference between a 2s and a 0.3s feedback loop.
+addopts = "-q --reuse-db"
