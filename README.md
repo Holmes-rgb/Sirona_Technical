@@ -8,37 +8,41 @@ SvelteKit frontend, Django REST Framework API, SQLite.
 ## Running it
 
 Requires Node 22+, Python 3.12+, and [uv](https://docs.astral.sh/uv/). No database
-server needed.
+server needed — the project uses SQLite.
 
-**Terminal 1 — backend** (http://127.0.0.1:8000):
+One command each, in two terminals. Both handle their own setup on a fresh clone.
+
+**Terminal 1 — backend** → http://127.0.0.1:8000
 
 ```bash
-cd backend
-uv sync
-uv run python manage.py migrate
-uv run python manage.py runserver 8000
+cd backend && uv run python manage.py dev
 ```
 
-**Terminal 2 — frontend** (http://localhost:5173):
+**Terminal 2 — frontend** → http://localhost:5173
 
 ```bash
-cd frontend
-npm install
-npm run dev
+cd frontend && npm run dev
 ```
 
 Then open http://localhost:5173.
+
+`uv run` installs the Python dependencies from `uv.lock` before running, and the `dev`
+management command applies migrations before starting the server. On the frontend,
+npm's `predev` hook runs `npm install` first. So neither side needs a separate setup
+step, and both are safe to re-run.
 
 ## Commands
 
 | Backend (from `backend/`) | |
 | --- | --- |
+| `uv run python manage.py dev` | Migrate and start the API |
 | `uv run pytest` | Run tests |
 | `uv run python manage.py makemigrations` / `migrate` | Create / apply migrations |
 | `uv run python manage.py check` | Django system checks |
 
 | Frontend (from `frontend/`) | |
 | --- | --- |
+| `npm run dev` | Install and start the dev server |
 | `npm run test` | Vitest — unit and component tests |
 | `npx vitest run --project server` | Unit tests only, no browser |
 | `npm run check` / `npm run lint` | Type check / lint |
@@ -57,13 +61,12 @@ without one, but not a `POST` or `PATCH` carrying a body.
 | `PATCH /api/todos/{id}/` | Rename — title only, `completed` is read-only |
 | `DELETE /api/todos/{id}/` | Delete; returns `{parent}` |
 
-
 ### The toggle response
 
 Completion propagates both ways, so one toggle can change several rows. The response
 names whichever direction it went:
 
-(Parents have null parent Id and null parent)
+(Parents have a null `parentId` and a null `parent`.)
 
 ```json
 // a sub-todo was ticked, completing its parent
@@ -78,9 +81,9 @@ names whichever direction it went:
 ```
 
 The unused side comes back `null` or `[]` rather than missing, so the client has one
-shape to handle. (All to dos are flat)
+shape to handle. (All todos are flat.)
 
-**any endpoint that changes a row other than the one addressed hands that row back. Database is one sourse of truth.**
+**any endpoint that changes a row other than the one addressed hands that row back. Database is the one source of truth.**
 
 ## Structure
 
@@ -118,9 +121,7 @@ makes same-origin requests — no CORS, and no API base URL to configure.
 data, so putting it there means it holds however the change arrives.
 
 
-**The frontend holds exactly what the API returns: one flat array.** Nesting is a
-derived for rendering and never stored, so an update is a
-swap by id.
+**The frontend holds exactly what the API returns: one flat array.** Nesting is derived for rendering and never stored, so an update is a swap by id.
 
 ```ts
 export function applyToggleResponse(todos, { todo, parent, children }) {
@@ -128,7 +129,7 @@ export function applyToggleResponse(todos, { todo, parent, children }) {
 }
 ```
 
-Ticking a checkbox, in either direction, is one `PATCH` and no follow-up `GET`. The frontend applys returned data from the database to make sure it remains sourse of truth
+Ticking a checkbox, in either direction, is one `PATCH` and no follow-up `GET`. The frontend applies returned data from the database to make sure it remains the source of truth.
 
 ## Tests
 
@@ -145,7 +146,7 @@ cd frontend && npm run test      # 36
 | `frontend/src/lib/api/client.spec.ts` | 7 — URL building, error handling |
 | `frontend/src/lib/components/todo/TodoItem.svelte.spec.ts` | 5 — rendering and callbacks, in real Chromium |
 
-The brief asks for three backend tests. I added some frontend tests, as well as an api liveness test (part of opening skeleton) and other tests nessisary for correct frontend operation.
+The brief asks for three backend tests. I added some frontend tests, as well as an api liveness test (part of opening skeleton) and other tests necessary for correct frontend operation.
 
 ## Assumptions
 
