@@ -10,7 +10,7 @@ SvelteKit frontend, Django REST Framework API, SQLite.
 Requires Node 22+, Python 3.12+, and [uv](https://docs.astral.sh/uv/). No database
 server needed — the project uses SQLite.
 
-One command each, in two terminals. Both handle their own setup on a fresh clone.
+One command each, in two terminals. Both handle their own setup on a fresh clone. I know the prompt said one command for a monorepo, but this way makes more practiical sence to me.
 
 **Terminal 1 — backend** → http://127.0.0.1:8000
 
