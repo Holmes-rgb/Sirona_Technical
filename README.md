@@ -57,13 +57,13 @@ without one, but not a `POST` or `PATCH` carrying a body.
 | `PATCH /api/todos/{id}/` | Rename — title only, `completed` is read-only |
 | `DELETE /api/todos/{id}/` | Delete; returns `{parent}` |
 
-Creating a sub-todo under a todo that doesn't exist, or under one that is itself a
-sub-todo, returns `400`. Deleting a todo that doesn't exist returns `404`.
 
 ### The toggle response
 
 Completion propagates both ways, so one toggle can change several rows. The response
 names whichever direction it went:
+
+(Parents have null parent Id and null parent)
 
 ```json
 // a sub-todo was ticked, completing its parent
@@ -78,13 +78,9 @@ names whichever direction it went:
 ```
 
 The unused side comes back `null` or `[]` rather than missing, so the client has one
-shape to handle.
+shape to handle. (All to dos are flat)
 
-A response carrying only the toggled todo would leave the client stale — it would have
-to refetch the list, or recompute the rest itself, and recomputing is the duplication
-that lets client and server disagree. Since the server owns the completion rule, it
-also reports everything that rule changed. The same applies to `DELETE` and `POST`:
-**any endpoint that changes a row other than the one addressed hands that row back.**
+**any endpoint that changes a row other than the one addressed hands that row back. Database is one sourse of truth.**
 
 ## Structure
 
@@ -113,26 +109,18 @@ domain area, re-exported from `__init__.py`, so callers write `from api.models i
 Todo` without knowing which module it lives in.
 
 In development the SvelteKit dev server proxies `/api/*` to Django, so the browser only
-makes same-origin requests — no CORS preflight, and no API base URL to configure. The
-same relative path works from server-side `load` functions and in production behind a
-reverse proxy.
+makes same-origin requests — no CORS, and no API base URL to configure.
 
 ## Design notes
 
 **The completion rule lives on the model** — `Todo.toggle()` and
 `Todo.recalculate_completed()` in `backend/api/models/todos.py`. It is a fact about the
-data, so putting it there means it holds however the change arrives: a REST call, the
-Django admin, a shell, a test. Views translate HTTP into a domain call and shape the
-response; they decide nothing.
+data, so putting it there means it holds however the change arrives.
 
-`completed` is read-only on the serializer, which is what makes that enforceable —
-`toggle` becomes the only path that can change completion state, so no plain `PATCH`
-can mark a parent done while its sub-todos are not. It also makes exposing `PATCH` for
-inline title editing safe.
 
 **The frontend holds exactly what the API returns: one flat array.** Nesting is a
-`$derived` projection built for rendering and never stored, so applying an update is a
-swap by id rather than a walk through a tree:
+derived for rendering and never stored, so an update is a
+swap by id.
 
 ```ts
 export function applyToggleResponse(todos, { todo, parent, children }) {
@@ -140,13 +128,7 @@ export function applyToggleResponse(todos, { todo, parent, children }) {
 }
 ```
 
-Ticking a checkbox, in either direction, is one `PATCH` and no follow-up `GET`. The
-client never works out whether a parent should be complete — it only applies what the
-server reported.
-
-`TodoList` is deliberately not recursive: the domain is one level deep and the API
-rejects anything deeper, so a self-rendering component would advertise a capability the
-system does not have.
+Ticking a checkbox, in either direction, is one `PATCH` and no follow-up `GET`. The frontend applys returned data from the database to make sure it remains sourse of truth
 
 ## Tests
 
@@ -163,14 +145,9 @@ cd frontend && npm run test      # 36
 | `frontend/src/lib/api/client.spec.ts` | 7 — URL building, error handling |
 | `frontend/src/lib/components/todo/TodoItem.svelte.spec.ts` | 5 — rendering and callbacks, in real Chromium |
 
-The brief asks for three backend tests. The rest cover behaviour the completion rule
-implies but the brief does not state — adding a sub-todo re-opening a completed parent,
-deleting the last incomplete sub-todo completing it, and `completed` being unsettable
-through create or update.
+The brief asks for three backend tests. I added some frontend tests, as well as an api liveness test (part of opening skeleton) and other tests nessisary for correct frontend operation.
 
 ## Assumptions
-
-Questions the brief left open, and what I assumed to move forward.
 
 **Q: Should deleting a parent also delete its sub-todos?**
 Yes. Expressed as `on_delete=CASCADE` on the foreign key, so it holds even for deletes
@@ -229,8 +206,3 @@ out of order. Acceptable for a single-user app; the fix is a request sequence nu
 `toggle()` runs in a transaction, but there is no row locking — SQLite does not support
 `SELECT FOR UPDATE`. On Postgres the parent row would be locked so two sibling
 sub-todos toggled at once could not race on the recalculation.
-
----
-
-[NOTES.md](NOTES.md) covers the reasoning behind the technical decisions — why SQLite,
-why the proxy instead of CORS, and the traps worth knowing about.
