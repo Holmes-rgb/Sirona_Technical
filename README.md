@@ -4,9 +4,23 @@ Full-stack application: SvelteKit frontend, Django REST Framework API.
 
 ## Running it
 
+Two terminals.
+
+**Terminal 1 — backend** (http://127.0.0.1:8000):
+
 ```bash
-make install   # dependencies + database (safe to re-run)
-make dev       # backend on :8000, frontend on :5173
+cd backend
+uv sync                              # first time only
+uv run python manage.py migrate      # first time, and after model changes
+uv run python manage.py runserver 8000
+```
+
+**Terminal 2 — frontend** (http://localhost:5173):
+
+```bash
+cd frontend
+npm install                          # first time only
+npm run dev
 ```
 
 Open http://localhost:5173.
@@ -16,16 +30,30 @@ server is needed — the project uses SQLite.
 
 ## Commands
 
-`make help` lists everything. The ones that matter:
+All backend commands run from `backend/`, all frontend commands from `frontend/`.
+
+**Backend**
 
 | Command | Does |
 | --- | --- |
-| `make dev` | Both servers, one terminal |
-| `make test` | pytest + vitest |
-| `make mm` / `make migrate` | Create / apply migrations |
-| `make testuser` | Create a throwaway login for testing auth |
-| `make check` | Django checks + Svelte type checking |
-| `make lint` / `make format` | Frontend linting and formatting |
+| `uv run python manage.py runserver 8000` | Start the API |
+| `uv run pytest` | Run tests |
+| `uv run python manage.py makemigrations` | Create migrations from model changes |
+| `uv run python manage.py migrate` | Apply migrations |
+| `uv run python manage.py check` | Django system checks |
+| `uv run python manage.py shell` | Shell with models loaded |
+| `uv run python manage.py createsuperuser` | Create an admin user |
+
+**Frontend**
+
+| Command | Does |
+| --- | --- |
+| `npm run dev` | Start the dev server |
+| `npm run test` | Vitest: unit + component tests |
+| `npx vitest run --project server` | Unit tests only — no browser, fastest |
+| `npm run check` | Svelte type checking |
+| `npm run lint` / `npm run format` | Lint / auto-format |
+| `npm run build` | Production build |
 
 ## Layout
 
@@ -50,7 +78,13 @@ frontend/
 
 ## Authentication
 
-Django session auth. `make testuser` creates `tester` / `pw-12345`.
+Django session auth. To create a throwaway login for testing:
+
+```bash
+cd backend && uv run python manage.py shell -c \
+  "from django.contrib.auth.models import User; \
+   User.objects.create_user('tester', 'tester@example.com', 'pw-12345')"
+```
 
 | Endpoint | Purpose |
 | --- | --- |

@@ -114,7 +114,8 @@ DRF defaults to `IsAuthenticated`, so endpoints are private unless they opt out 
 `@permission_classes([AllowAny])`. Forgetting the decorator produces a 403 rather than
 a data leak — the safe direction to fail in.
 
-`make testuser` creates `tester` / `pw-12345` for exercising the flow by hand.
+See README.md for a one-liner that creates a throwaway user to exercise the flow
+by hand.
 
 ## Testing
 
@@ -124,8 +125,8 @@ runs — the difference between a two-second and a sub-second feedback loop.
 Vitest is split into two projects. The `server` project (plain Node) runs `*.spec.ts`
 — logic and the API client. The `client` project runs `*.svelte.spec.ts` against real
 Chromium via Playwright, so component tests exercise actual DOM and events rather than
-a jsdom approximation. Both run under `make test`; `make test-unit` runs the Node ones
-alone when a sub-second loop matters.
+a jsdom approximation. `npm run test` runs both; `npx vitest run --project server`
+runs the Node ones alone when a sub-second loop matters.
 
 Chromium is already installed locally. On a fresh machine the client project needs
 `npx playwright install chromium` first.
