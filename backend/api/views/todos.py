@@ -40,7 +40,7 @@ class TodoViewSet(
     # opts out for this resource.
     pagination_class = None
 
-    def perform_create(self, serializer: TodoSerializer) -> None:
+    def create(self, serializer: TodoSerializer) -> None:
         """
         Save the todo, then restore the invariant if it landed under a parent.
 
