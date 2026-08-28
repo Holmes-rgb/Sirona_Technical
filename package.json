@@ -1,0 +1,11 @@
+{
+	"name": "sirona-technical",
+	"private": true,
+	"description": "Root package: exists only to provide concurrently for `make dev`.",
+	"scripts": {
+		"dev": "make dev"
+	},
+	"devDependencies": {
+		"concurrently": "^10.0.5"
+	}
+}
