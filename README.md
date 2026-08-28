@@ -58,31 +58,138 @@ All backend commands run from `backend/`, all frontend commands from `frontend/`
 | `npm run lint` / `npm run format` | Lint / auto-format |
 | `npm run build` | Production build |
 
-## Layout
+## Architecture
+
+### The two halves
+
+Two servers in development. The SvelteKit dev server proxies `/api/*` to Django
+([frontend/vite.config.ts](frontend/vite.config.ts)), so the browser only ever makes
+**same-origin** requests: no CORS preflight, no API base URL to configure, and client
+code fetches the relative path `/api/todos/`. The same relative path works from
+server-side `load` functions too, and in production behind a reverse proxy.
+
+```
+browser  ──▶  SvelteKit :5173  ──/api/*──▶  Django :8000  ──▶  SQLite
+              (UI + SSR)          proxy       (API + rules)
+```
+
+`django-cors-headers` is configured as a fallback for serving the frontend from a
+different origin, but nothing in development relies on it.
+
+### Backend
 
 ```
 backend/
-  config/            Django project: settings, root URLs
+  manage.py
+  pyproject.toml            Dependencies (uv) and pytest config
+  config/
+    settings.py             DRF defaults, CORS, database
+    urls.py                 Mounts api.urls under /api/
   api/
-    models/          One module per domain area, re-exported from __init__.py
-    serializers/     Validation and JSON shaping
-    models/todos.py  The Todo model — where the completion invariant lives
-    views/           One module per domain area
-    tests/           Mirrors views/
-    urls.py          Router for CRUD, explicit paths for everything else
-frontend/
-  src/lib/config.ts         API base URL
-  src/lib/api/
-    client.ts               HTTP core: URL building, errors, JSON
-    todos.ts                Todo endpoints and types
-    index.ts                Re-exports; components import from '$lib/api'
-  src/lib/todos/
-    operations.ts           Pure list logic — tree building, applying responses
-    store.svelte.ts         Reactive state over the pure functions
-  src/lib/components/todo/  TodoList, TodoItem, AddTodoForm
-  src/lib/components/ui/    shadcn-svelte components
-  src/routes/               Pages (SvelteKit file-based routing)
+    models/todos.py         ★ The Todo model — the completion invariant lives here
+    serializers/todos.py    Validation, JSON shape, and what may be written
+    views/todos.py          HTTP ↔ domain; shapes the toggle/delete responses
+    views/health.py         Liveness probe
+    urls.py                 DefaultRouter for CRUD, explicit paths otherwise
+    admin.py                Todo registered for inspecting rows in /admin/
+    migrations/0001_initial.py
+    tests/test_todos.py     15 tests, mostly about the invariant
 ```
+
+Each of `models/`, `serializers/`, `views/` and `tests/` is a **package with one
+module per domain area**, re-exported from its `__init__.py`. So callers write
+`from api.models import Todo` and never need to know which module it lives in — adding
+a second domain means adding a file, not growing a 500-line `models.py`.
+
+| Layer | Responsibility | Must not |
+| --- | --- | --- |
+| Model | The data, and the rules that are true of it | Know about HTTP |
+| Serializer | Validate input, control output, decide what is writable | Contain business rules |
+| View | Translate HTTP to a domain call, shape the response | Decide what "complete" means |
+| URLs | Routing only | — |
+
+**Rules live at the bottom and nothing above re-implements them.** That is the single
+organising idea: `Todo.toggle()` is the only thing that knows what toggling means, so
+it behaves identically whether it was reached from the API, the admin, a shell, or a
+test.
+
+### Frontend
+
+```
+frontend/
+  vite.config.ts            Dev proxy /api → :8000; Vitest projects
+  src/
+    lib/
+      config.ts             API base URL (relative, so it works in SSR too)
+      api/
+        client.ts           HTTP core: URL building, JSON, ApiError
+        todos.ts            ★ Todo endpoints and types — the API contract
+        index.ts            Re-exports; components import from '$lib/api'
+      todos/
+        operations.ts       ★ Pure list logic — tree building, applying responses
+        operations.spec.ts  16 unit tests, Node only
+        store.svelte.ts     Reactive state; thin glue over the two above
+      components/
+        todo/TodoList.svelte    Renders the derived tree
+        todo/TodoItem.svelte    One row — used for parents and sub-todos alike
+        todo/AddTodoForm.svelte One form — used for top-level and sub-todos alike
+        ui/                     shadcn-svelte components
+    routes/
+      +layout.svelte        Global styles and the toast host
+      +page.server.ts       SSR load — the list arrives with the HTML
+      +page.svelte          Page shell; owns the store
+```
+
+| Layer | Responsibility | Must not |
+| --- | --- | --- |
+| `api/todos.ts` | Build requests, name the response types | Hold state |
+| `todos/operations.ts` | Pure transforms over a flat array | Touch the network or runes |
+| `todos/store.svelte.ts` | Hold state, call the API, apply the result | Re-implement the completion rule |
+| `components/todo/` | Render, and report what the user did | Fetch anything |
+
+The pure layer exists so the logic that keeps the UI correct can be tested as plain
+functions, with no browser and no rendering.
+
+### End to end: ticking the last sub-todo
+
+The most useful thing to trace, because it touches every layer and is where the
+interesting behaviour lives. "Groceries" has two sub-todos; "Milk" is already done and
+the user ticks "Eggs".
+
+| # | Where | What happens |
+| --- | --- | --- |
+| 1 | `TodoItem.svelte` | Checkbox fires the `onToggle` callback prop. The row knows nothing else. |
+| 2 | `TodoList.svelte` | That callback is `() => store.toggle(child.id)`. |
+| 3 | `store.svelte.ts` | Marks the id pending, which disables that one checkbox. |
+| 4 | `api/todos.ts` | `toggleTodo(3)` → `PATCH /todos/3/toggle/`, no body. |
+| 5 | `api/client.ts` | Builds `/api/todos/3/toggle/` and fetches. No cookies, no CSRF token. |
+| 6 | `vite.config.ts` | Proxy forwards to `127.0.0.1:8000` — same-origin, so no preflight. |
+| 7 | `api/urls.py` | Router maps the URL to the ViewSet's `toggle` action. |
+| 8 | `views/todos.py` | Loads the todo, calls `todo.toggle()`. Decides nothing itself. |
+| 9 | `models/todos.py` | **In a transaction:** flips `completed`; sees it is a sub-todo; calls `parent.recalculate_completed()`. |
+| 10 | `models/todos.py` | One `EXISTS` query finds no incomplete siblings → saves the parent complete, returns it. |
+| 11 | `views/todos.py` | Serializes both into `{"todo": …, "parent": …}`. |
+| 12 | `store.svelte.ts` | Hands the response to `applyToggleResponse`. |
+| 13 | `todos/operations.ts` | Two swaps by id in the flat array; returns a new array. |
+| 14 | `store.svelte.ts` | Assigning to `$state` invalidates the `$derived` tree. |
+| 15 | Svelte | Re-renders both checkboxes. |
+
+**One request. No refetch.** The client never worked out that the parent should
+complete — step 10 did, and step 11 reported it.
+
+### Where the tests are
+
+| Suite | Location | Covers |
+| --- | --- | --- |
+| Backend | `backend/api/tests/test_todos.py` | 15 tests — the invariant and its edge cases |
+| Backend | `backend/api/tests/test_health.py` | 1 test — liveness |
+| Frontend | `frontend/src/lib/todos/operations.spec.ts` | 16 tests — tree building, applying responses |
+| Frontend | `frontend/src/lib/api/client.spec.ts` | 7 tests — URL building, error handling |
+
+The brief asks for three backend tests. The extra ones cover behaviour the invariant
+implies but the brief does not state — adding a sub-todo re-opening a completed parent,
+deleting the last incomplete sub-todo completing it, and `completed` being unsettable
+through create or update.
 
 ## API
 
@@ -157,14 +264,7 @@ The client never computes whether a parent should be complete. That rule lives o
 server precisely so there is one implementation of it; a copy here would be a second
 one, free to disagree.
 
-Layering keeps the graded logic testable without a browser:
-
-| File | Role |
-| --- | --- |
-| `src/lib/api/todos.ts` | HTTP calls and types |
-| `src/lib/todos/operations.ts` | Pure functions — tree building, applying responses |
-| `src/lib/todos/store.svelte.ts` | Reactive state, thin glue over the two above |
-| `src/lib/components/todo/` | Presentational — no fetching, no rules |
+See **Architecture → Frontend** above for how the layers divide.
 
 `TodoList` is deliberately **not** recursive. The domain is exactly one level deep and
 the API rejects anything deeper, so a self-rendering component would advertise a
@@ -243,14 +343,8 @@ there is no row locking — SQLite doesn't support `SELECT FOR UPDATE`. On Postg
 parent row would be locked so that two sibling sub-todos toggled at once could not
 race on the parent's recalculation.
 
-## How the two halves connect
+## Further reading
 
-The Vite dev server proxies `/api/*` to Django on port 8000
-([frontend/vite.config.ts](frontend/vite.config.ts)). The browser only ever makes
-same-origin requests, so there is no CORS preflight in development and no API base
-URL to configure — client code fetches the relative path `/api/health/`.
-
-`django-cors-headers` is configured as well, for the case where the frontend is
-served from a different origin than the API.
-
-See [NOTES.md](NOTES.md) for the reasoning behind the technical decisions.
+[NOTES.md](NOTES.md) records the reasoning behind the technical decisions —
+why SQLite, why the proxy instead of CORS, why auth was removed, and the details of
+the completion invariant.
