@@ -41,6 +41,10 @@ export default defineConfig({
 		projects: [
 			{
 				extends: './vite.config.ts',
+				// bits-ui (which the shadcn components wrap) uses $effect.pre. If Vite
+				// pre-bundles it, it ends up with a different Svelte runtime instance
+				// than the component tree, and every effect throws effect_orphan.
+				optimizeDeps: { exclude: ['bits-ui'] },
 				test: {
 					name: 'client',
 					browser: {

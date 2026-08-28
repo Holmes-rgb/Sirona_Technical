@@ -1,8 +1,7 @@
 # Decisions
 
-A running log of technical decisions and the reasoning behind them. Add to it while
-building — an entry costs thirty seconds and turns "why did you do it that way?" into
-something I can point at rather than reconstruct.
+Why this project is built the way it is. README.md covers what it does and how to run
+it; this file covers the reasoning, and the traps worth knowing about.
 
 ---
 
@@ -32,57 +31,17 @@ The honest caveat: Postgres-only features are off the table while on SQLite — 
 operators, full-text search, `ArrayField`. If the problem needs one of those, switching
 early is cheaper than working around it.
 
-## Vite proxy instead of CORS
+## The CORS middleware ordering trap
 
-`vite.config.ts` proxies `/api` to `127.0.0.1:8000`. The browser sees same-origin
-requests, so no preflight, no `SameSite` cookie problems, and no API base URL in the
-client — just relative paths, which work identically in production behind a reverse
-proxy.
+The proxy means CORS never fires in development (README explains the setup).
+`django-cors-headers` is still configured for serving the frontend from another
+origin, and the ordering in `settings.py` matters: `CorsMiddleware` must sit **above**
+`CommonMiddleware`. `CommonMiddleware` can emit redirects, and a redirect that has not
+passed through `CorsMiddleware` carries no CORS headers — which surfaces in the browser
+as an opaque failure looking nothing like the redirect that caused it.
 
-`django-cors-headers` is still configured for when the frontend is served from a
-different origin. Note the middleware ordering in `settings.py`: `CorsMiddleware` must
-sit above `CommonMiddleware`, because `CommonMiddleware` can emit redirects and a
-redirect that hasn't passed through `CorsMiddleware` carries no CORS headers — which
-surfaces in the browser as an opaque failure that looks nothing like its cause.
+## Two details in the API client
 
-## Layout mirrors the project-manager repo
-
-Structure follows my existing SvelteKit + DRF project so the muscle memory carries
-over:
-
-  * `api/models/`, `api/serializers/`, `api/views/` as packages split by domain, each
-    re-exporting from `__init__.py` so callers import from `api.views` and never need
-    to know which module something lives in.
-  * `src/lib/config.ts` for the API base URL.
-  * `src/lib/api/` with one module per resource, imported as `$lib/api`.
-  * `+page.server.ts` load functions for data needed on first paint.
-
-Three things were deliberately *not* carried over, and each is a considered change
-rather than an oversight:
-
-**Responses are checked before being parsed.** The older code did `return await
-res.json()` with no status check, so a 400 or 500 flowed on as if it were data and
-surfaced later as a confusing undefined. Failures now raise `ApiError`.
-
-**CRUD goes on a router, not one URL per verb.** The older API used RPC-style paths
-(`/tasks/add/`, `/tasks/delete/`, POST for everything). ViewSets on a `DefaultRouter`
-generate the standard REST URLs from one registration, so there is less to write and
-the HTTP verbs mean what they normally mean. `@api_view` functions are still the right
-tool for non-CRUD operations — auth, actions spanning models, reports — and the auth
-endpoints use them.
-
-**Responses go through serializers.** Some older views built response dicts by hand
-in a comprehension. That drifts out of sync with the model silently and gives no
-validation on input.
-
-## One API client module
-
-Every request goes through `frontend/src/lib/api/client.ts`. Cross-cutting concerns — JSON
-encoding, error handling, query-string building, and later auth headers — are
-implemented once. Adding a bearer token is a change to one file rather than to every
-component that fetches.
-
-Two details worth noting:
 - `ApiError` carries the parsed response body, because DRF returns validation errors
   as `{field: [messages]}` and forms need that to highlight the right inputs.
 - The response is read as text and then parsed, rather than via `.json()`. An
@@ -97,11 +56,7 @@ per-view is easy to forget, and an unpaginated list endpoint that works fine aga
 
 ## No auth
 
-The brief requires no authentication, so there is none. The scaffold originally had
-Django session auth wired through both halves; it was removed before any feature work
-started, so nothing on the critical path is something the spec didn't ask for.
-
-Two details worth knowing, because they are not obvious:
+There is none, because the brief describes no users. Two non-obvious consequences:
 
 - `DEFAULT_AUTHENTICATION_CLASSES` is set to an explicit `[]`, not omitted. DRF's own
   default is `[SessionAuthentication, BasicAuthentication]`, so omitting it switches
@@ -159,16 +114,20 @@ invariant changed". The fix was making the code true to what it already said.
 runs — the difference between a two-second and a sub-second feedback loop.
 
 Vitest is split into two projects. The `server` project (plain Node) runs `*.spec.ts`
-— logic and the API client. The `client` project runs `*.svelte.spec.ts` against real
-Chromium via Playwright, so component tests exercise actual DOM and events rather than
-a jsdom approximation. `npm run test` runs both; `npx vitest run --project server`
-runs the Node ones alone when a sub-second loop matters.
+— the pure list operations and the API client, which is where the logic worth proving
+lives. The `client` project runs `*.svelte.spec.ts` in real Chromium via Playwright,
+so `TodoItem` is tested against actual DOM and real clicks rather than a jsdom
+approximation. `npm run test` runs both; `npx vitest run --project server` runs the
+Node ones alone when a sub-second loop matters.
+
+Two things about the browser project:
+
+- It needs `optimizeDeps: { exclude: ['bits-ui'] }`. The shadcn components wrap
+  bits-ui, which uses `$effect.pre`; if Vite pre-bundles it, it gets a different Svelte
+  runtime instance than the component tree and every effect throws `effect_orphan`.
+- A Vitest project matching no files passes silently with exit code 0 — it does not
+  fail. So an empty browser project is worse than none: it looks like coverage and
+  proves nothing.
 
 Chromium is already installed locally. On a fresh machine the client project needs
 `npx playwright install chromium` first.
-
----
-
-## Log
-
-<!-- Append during the build: one line per real decision. -->

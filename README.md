@@ -88,7 +88,7 @@ backend/
   api/
     models/todos.py         ★ The Todo model — the completion invariant lives here
     serializers/todos.py    Validation, JSON shape, and what may be written
-    views/todos.py          HTTP ↔ domain; shapes the toggle/delete responses
+    views/todos.py          HTTP ↔ domain; shapes the create/toggle/delete responses
     views/health.py         Liveness probe
     urls.py                 DefaultRouter for CRUD, explicit paths otherwise
     admin.py                Todo registered for inspecting rows in /admin/
@@ -132,6 +132,7 @@ frontend/
       components/
         todo/TodoList.svelte    Renders the derived tree
         todo/TodoItem.svelte    One row — used for parents and sub-todos alike
+        todo/TodoItem.svelte.spec.ts  5 component tests, real Chromium
         todo/AddTodoForm.svelte One form — used for top-level and sub-todos alike
         ui/                     shadcn-svelte components
     routes/
@@ -185,6 +186,7 @@ complete — step 10 did, and step 11 reported it.
 | Backend | `backend/api/tests/test_health.py` | 1 test — liveness |
 | Frontend | `frontend/src/lib/todos/operations.spec.ts` | 24 tests — tree building, applying responses |
 | Frontend | `frontend/src/lib/api/client.spec.ts` | 7 tests — URL building, error handling |
+| Frontend | `frontend/src/lib/components/todo/TodoItem.svelte.spec.ts` | 5 tests — rendering and callbacks, in real Chromium |
 
 The brief asks for three backend tests. The extra ones cover behaviour the invariant
 implies but the brief does not state — adding a sub-todo re-opening a completed parent,
