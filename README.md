@@ -1,6 +1,9 @@
 # Sirona Technical
 
-Full-stack application: SvelteKit frontend, Django REST Framework API.
+A todo list where each todo can have sub-todos. A parent completes automatically when
+all of its sub-todos are complete, and re-opens if any is unchecked.
+
+SvelteKit frontend, Django REST Framework API, SQLite.
 
 ## Running it
 
@@ -63,6 +66,7 @@ backend/
   api/
     models/          One module per domain area, re-exported from __init__.py
     serializers/     Validation and JSON shaping
+    models/todos.py  The Todo model — where the completion invariant lives
     views/           One module per domain area
     tests/           Mirrors views/
     urls.py          Router for CRUD, explicit paths for everything else
@@ -75,21 +79,109 @@ frontend/
   src/routes/               Pages (SvelteKit file-based routing)
 ```
 
-## Authentication
+## API
 
-None. The brief requires no authentication, so the API is public and there is no login
-step between a reviewer and a working app.
+All endpoints are under `/api/`. Note the trailing slashes — Django's `APPEND_SLASH`
+redirects a GET without one, but **not** a POST or PATCH carrying a body.
 
-`DEFAULT_AUTHENTICATION_CLASSES` is set to an explicit empty list in
-`backend/config/settings.py` rather than omitted — DRF's own default is
-`[SessionAuthentication, BasicAuthentication]`, so omitting it would switch session
-auth back on. With no `SessionAuthentication` there is no CSRF check on the API
-either, because DRF wraps every view in `csrf_exempt` and CSRF is enforced solely by
-that class. The frontend client therefore sends no tokens and no cookies.
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/todos/` | All todos, flat array, parents and sub-todos together |
+| `POST /api/todos/` | Create; `{"title": "...", "parentId": null \| id}` |
+| `PATCH /api/todos/{id}/toggle/` | Flip completion; returns `{todo, parent}` |
+| `PATCH /api/todos/{id}/` | Rename (title only — `completed` is read-only) |
+| `DELETE /api/todos/{id}/` | Delete; returns `{parent}` |
+| `GET /api/health/` | Liveness probe |
 
-The Django admin at `/admin/` is still enabled as a development tool for inspecting
-data; it has its own login. Create a superuser with
-`uv run python manage.py createsuperuser`.
+### Where the completion logic lives
+
+On the model — `Todo.toggle()` and `Todo.recalculate_completed()` in
+`backend/api/models/todos.py` — not in the view, the serializer, or the frontend.
+
+The rule is a fact about the data, not about any one way of viewing it. Putting it on
+the model means it holds no matter what triggers the change: a REST call, the Django
+admin, a shell session, a test. A serializer is presentation. And a frontend that
+computes the invariant can get it wrong or simply lie, at which point the stored data
+is wrong for every other client too. The server has to be the one that decides.
+
+The views stay thin: translate HTTP to a domain call, shape the response.
+
+### How the toggle response is shaped, and why
+
+`PATCH /api/todos/{id}/toggle/` returns both objects:
+
+```json
+{
+  "todo":   { "id": 2, "title": "Milk", "completed": true, "parentId": 1 },
+  "parent": { "id": 1, "title": "Groceries", "completed": true, "parentId": null }
+}
+```
+
+`parent` is `null` when the toggled todo is top-level.
+
+Toggling one sub-todo can change two rows, so a response carrying only the toggled
+todo would leave the client knowingly stale — it would have to either refetch the whole
+list or recompute the parent itself, and recomputing is exactly the duplication that
+lets client and server disagree. Since the server owns the invariant, it also has to
+report everything the invariant changed. One request, one response, both checkboxes
+correct.
+
+The same reasoning is applied to `DELETE`, which returns `{parent}` for the same
+reason — see the assumptions below.
+
+## Assumptions
+
+Questions the brief left open, and what was assumed to move forward.
+
+**Q: Should deleting a parent also delete its sub-todos?**
+Assumption: Yes. Expressed as `on_delete=CASCADE` on the foreign key, so it is a
+database constraint rather than application code and holds for deletes that never go
+through the API.
+
+**Q: What should toggling a *parent* that has sub-todos do?**
+Assumption: It cascades — all its sub-todos take the parent's new state. The brief
+only defines toggling a sub-todo. Flipping the parent alone would leave it claiming to
+be complete while its sub-todos were unfinished, breaking the invariant until the next
+child toggle silently overrode it.
+
+**Q: Should adding a new sub-todo to an already-complete parent re-open it?**
+Assumption: Yes. A new sub-todo starts incomplete, and a parent carrying unfinished
+work must not stay marked complete.
+
+**Q: Should deleting the last *incomplete* sub-todo complete the parent?**
+Assumption: Yes. Once the outstanding item is gone, everything that remains is done.
+The parent is captured before the delete and re-derived after.
+
+**Q: Is a todo with no sub-todos complete?**
+Assumption: No — it owns its own state. "All zero of its sub-todos are complete" is
+vacuously true, which would be the wrong answer, so recalculation is a no-op for a
+childless todo.
+
+**Q: Can `completed` be set directly through create or update?**
+Assumption: No. It is read-only on the serializer, so `toggle` is the only path that
+changes it. Otherwise a plain PATCH could mark a parent complete while its sub-todos
+were unfinished and bypass the invariant entirely. This is also what makes exposing
+PATCH for inline title editing safe.
+
+**Q: Should `DELETE` return the updated parent, or a bodiless 204?**
+Assumption: It returns `200` with `{parent}`. This deviates from the REST convention
+deliberately, applying the same principle as toggle: any endpoint that can change a
+parent's state hands that parent back, so the UI never has to refetch.
+
+**Q: Flat or nested list?**
+Assumption: Flat. One Todo shape is used by every endpoint — list, create, and both
+halves of the toggle response — so a client only ever has to understand one object.
+The UI groups by `parentId`.
+
+**Q: Should the API require authentication?**
+Assumption: No. The brief describes no users, so the API is public and there is no
+login step between a reviewer and a working app.
+
+**Q: What are the concurrency guarantees?**
+Assumption: Single-user is sufficient. `toggle()` is wrapped in a transaction, but
+there is no row locking — SQLite doesn't support `SELECT FOR UPDATE`. On Postgres the
+parent row would be locked so that two sibling sub-todos toggled at once could not
+race on the parent's recalculation.
 
 ## How the two halves connect
 

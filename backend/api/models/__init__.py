@@ -6,13 +6,11 @@ navigable as the schema grows. Everything is re-exported here, so the rest of th
 codebase imports from `api.models` and never needs to know which module a model
 happens to live in:
 
-    from api.models import Task     # not: from api.models.tasks import Task
+    from api.models import Todo     # not: from api.models.todos import Todo
 
 To add a domain: create the module, then re-export its names below.
 """
 
-# Example, once a domain module exists:
-#     from .tasks import SubTask, Task
-#     __all__ = ["Task", "SubTask"]
+from .todos import Todo
 
-__all__: list[str] = []
+__all__ = ["Todo"]

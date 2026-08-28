@@ -10,8 +10,6 @@ Mirrors the layout of `api.models`: one module per domain area, re-exported here
 callers import from `api.serializers`.
 """
 
-# Example:
-#     from .tasks import TaskSerializer
-#     __all__ = ["TaskSerializer"]
+from .todos import TodoSerializer
 
-__all__: list[str] = []
+__all__ = ["TodoSerializer"]

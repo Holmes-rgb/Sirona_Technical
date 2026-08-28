@@ -15,8 +15,7 @@ from rest_framework.routers import DefaultRouter
 from . import views
 
 router = DefaultRouter()
-# Register CRUD ViewSets here, e.g.:
-#     router.register(r"tasks", views.TaskViewSet, basename="task")
+router.register(r"todos", views.TodoViewSet, basename="todo")
 
 urlpatterns = [
     path("health/", views.health, name="health"),

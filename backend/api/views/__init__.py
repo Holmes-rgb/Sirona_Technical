@@ -16,7 +16,9 @@ Two view styles are in play, deliberately:
 """
 
 from .health import health
+from .todos import TodoViewSet
 
 __all__ = [
     "health",
+    "TodoViewSet",
 ]

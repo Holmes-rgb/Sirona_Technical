@@ -114,6 +114,28 @@ Two details worth knowing, because they are not obvious:
   that class. So `client.ts` sends no tokens, no cookies, and a write is one round
   trip. `CsrfViewMiddleware` stays in `MIDDLEWARE` for the admin's own forms.
 
+## The completion invariant
+
+`a parent is complete exactly when every one of its sub-todos is complete`
+
+Lives on the model (`api/models/todos.py`), as `Todo.toggle()` and
+`Todo.recalculate_completed()`. Views translate HTTP to a domain call and shape the
+response; they hold no rules.
+
+Three implementation details worth being able to defend:
+
+- **`completed` is read-only on the serializer.** This is what makes the invariant
+  enforceable at all: `toggle()` becomes the only path that can change completion
+  state, so no plain PATCH can mark a parent done while its children are not. It also
+  makes exposing PATCH for inline title editing safe.
+- **`recalculate_completed()` uses `.exists()`, not a Python `all()`.** One indexed
+  EXISTS query instead of loading every child. It also deliberately no-ops for a
+  childless todo — "all zero children are done" is vacuously true and would be wrong.
+- **No `select_for_update()`.** SQLite has `has_select_for_update = False` and the
+  query compiler raises `NotSupportedError`. `transaction.atomic()` is the right tool
+  here; on Postgres the parent row would be locked so two sibling sub-todos toggled
+  concurrently can't race on the recalculation.
+
 ## Testing
 
 `pytest-django` with `--reuse-db`, which skips recreating the test database between
