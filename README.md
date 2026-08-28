@@ -10,28 +10,33 @@ SvelteKit frontend, Django REST Framework API, SQLite.
 Requires Node 22+, Python 3.12+, and [uv](https://docs.astral.sh/uv/). No database
 server needed — the project uses SQLite.
 
-One command each, in two terminals. Both handle their own setup on a fresh clone.
-
-**Terminal 1 — backend** → http://127.0.0.1:8000
+From the repo root:
 
 ```bash
-cd backend && uv run python manage.py dev
+npm run dev
 ```
 
-**Terminal 2 — frontend** → http://localhost:5173
+That is the whole thing on a fresh clone. It installs its own dependencies, then starts
+both halves together with prefixed output:
+
+- **django** on http://127.0.0.1:8000 — migrations applied first
+- **svelte** on http://localhost:5173 — dependencies installed first
+
+Open http://localhost:5173. Ctrl-C stops both.
+
+Each side also runs on its own if you would rather watch them separately:
 
 ```bash
+cd backend  && uv run python manage.py dev
 cd frontend && npm run dev
 ```
 
-Then open http://localhost:5173.
-
-`uv run` installs the Python dependencies from `uv.lock` before running, and the `dev`
-management command applies migrations before starting the server. On the frontend,
-npm's `predev` hook runs `npm install` first. So neither side needs a separate setup
-step, and both are safe to re-run.
-
 ## Commands
+
+| Root | |
+| --- | --- |
+| `npm run dev` | Start both servers |
+| `npm test` | Run both test suites |
 
 | Backend (from `backend/`) | |
 | --- | --- |
@@ -88,6 +93,8 @@ shape to handle. (All todos are flat.)
 ## Structure
 
 ```
+package.json              Root: runs both halves together
+
 backend/
   config/settings.py        DRF defaults, CORS, database
   api/
