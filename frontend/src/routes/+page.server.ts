@@ -6,31 +6,30 @@
  * needs data on first paint; fetch from a component only for things triggered by user
  * interaction.
  *
- * Two details that matter:
- *
- *  - The `fetch` SvelteKit passes in is used, not the global one. It forwards the
- *    incoming request's cookies, so the Django session travels with a server-side
- *    call. The global `fetch` has no cookie jar and would arrive unauthenticated.
- *
- *  - The relative '/api' base URL works here as well as in the browser: SvelteKit
- *    resolves it against the app's own origin, which routes back through the Vite
- *    proxy to Django.
+ * Note it uses the `fetch` SvelteKit passes in, not the global one -- and that the
+ * relative '/api' base URL works here as well as in the browser, because SvelteKit
+ * resolves it against the app's own origin, which routes back through the Vite proxy
+ * to Django.
  */
 
-import { ApiError, checkSession } from '$lib/api';
+import { api, ApiError } from '$lib/api';
 import type { PageServerLoad } from './$types';
+
+interface Health {
+	status: string;
+}
 
 export const load: PageServerLoad = async ({ fetch }) => {
 	try {
-		const session = await checkSession({ fetch });
-		return { session, apiReachable: true };
+		const health = await api.get<Health>('/health/', { fetch });
+		return { apiReachable: true, apiStatus: health.status };
 	} catch (error) {
 		// A failure here means the API is unreachable, which is a scaffold problem
 		// rather than an application one. Render the page and report it, rather than
 		// throwing a 500 that hides the cause.
 		return {
-			session: { authenticated: false, user: null },
 			apiReachable: false,
+			apiStatus: null,
 			apiError:
 				error instanceof ApiError
 					? `API responded ${error.status}`

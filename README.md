@@ -63,14 +63,13 @@ backend/
   api/
     models/          One module per domain area, re-exported from __init__.py
     serializers/     Validation and JSON shaping
-    views/           health.py, auth.py — one module per domain area
+    views/           One module per domain area
     tests/           Mirrors views/
     urls.py          Router for CRUD, explicit paths for everything else
 frontend/
   src/lib/config.ts         API base URL
   src/lib/api/
-    client.ts               HTTP core: errors, CSRF, credentials
-    auth.ts                 Resource module — the template for new ones
+    client.ts               HTTP core: URL building, errors, JSON
     index.ts                Re-exports; components import from '$lib/api'
   src/lib/components/ui/    shadcn-svelte components
   src/routes/               Pages (SvelteKit file-based routing)
@@ -78,23 +77,19 @@ frontend/
 
 ## Authentication
 
-Django session auth. To create a throwaway login for testing:
+None. The brief requires no authentication, so the API is public and there is no login
+step between a reviewer and a working app.
 
-```bash
-cd backend && uv run python manage.py shell -c \
-  "from django.contrib.auth.models import User; \
-   User.objects.create_user('tester', 'tester@example.com', 'pw-12345')"
-```
+`DEFAULT_AUTHENTICATION_CLASSES` is set to an explicit empty list in
+`backend/config/settings.py` rather than omitted — DRF's own default is
+`[SessionAuthentication, BasicAuthentication]`, so omitting it would switch session
+auth back on. With no `SessionAuthentication` there is no CSRF check on the API
+either, because DRF wraps every view in `csrf_exempt` and CSRF is enforced solely by
+that class. The frontend client therefore sends no tokens and no cookies.
 
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /api/auth/csrf/` | Issues the CSRF token; call once on startup |
-| `POST /api/auth/login/` | Sign in |
-| `POST /api/auth/logout/` | Sign out |
-| `GET /api/auth/check/` | Current session (200 either way) |
-
-The frontend never handles CSRF by hand — `src/lib/api/client.ts` attaches the token
-to every unsafe request and caches it for the session.
+The Django admin at `/admin/` is still enabled as a development tool for inspecting
+data; it has its own login. Create a superuser with
+`uv run python manage.py createsuperuser`.
 
 ## How the two halves connect
 

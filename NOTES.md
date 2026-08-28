@@ -55,17 +55,10 @@ over:
     to know which module something lives in.
   * `src/lib/config.ts` for the API base URL.
   * `src/lib/api/` with one module per resource, imported as `$lib/api`.
-  * Django session auth with a CSRF token echoed in `X-CSRFToken`.
   * `+page.server.ts` load functions for data needed on first paint.
 
-Four things were deliberately *not* carried over, and each is a considered change
+Three things were deliberately *not* carried over, and each is a considered change
 rather than an oversight:
-
-**CSRF is fetched once, not per write.** The older code called `getCsrf()` before
-every mutating request, and redefined that helper in each API module. The token is
-stable for the session, so `client.ts` fetches it once, caches it, reads it from the
-cookie when possible, and clears it on logout (Django rotates it when the session
-changes). That halves the round trips on every write and removes the duplication.
 
 **Responses are checked before being parsed.** The older code did `return await
 res.json()` with no status check, so a 400 or 500 flowed on as if it were data and
@@ -102,20 +95,24 @@ Two details worth noting:
 per-view is easy to forget, and an unpaginated list endpoint that works fine against
 20 rows falls over at 20,000. The default is the safe direction to fail in.
 
-## Auth
+## No auth
 
-Django session auth rather than JWT. The session cookie is set by Django, marked
-HttpOnly, and sent by the browser automatically — so there is no token for frontend
-code to store, and none for an XSS bug to read. The cost is CSRF: unsafe methods must
-echo the `csrftoken` cookie in an `X-CSRFToken` header, which `client.ts` does for
-every non-GET automatically.
+The brief requires no authentication, so there is none. The scaffold originally had
+Django session auth wired through both halves; it was removed before any feature work
+started, so nothing on the critical path is something the spec didn't ask for.
 
-DRF defaults to `IsAuthenticated`, so endpoints are private unless they opt out with
-`@permission_classes([AllowAny])`. Forgetting the decorator produces a 403 rather than
-a data leak — the safe direction to fail in.
+Two details worth knowing, because they are not obvious:
 
-See README.md for a one-liner that creates a throwaway user to exercise the flow
-by hand.
+- `DEFAULT_AUTHENTICATION_CLASSES` is set to an explicit `[]`, not omitted. DRF's own
+  default is `[SessionAuthentication, BasicAuthentication]`, so omitting it switches
+  session auth back *on*. That matters because `/admin/` is still enabled: anyone
+  logged into admin in the same browser would have their session cookie authenticate
+  API calls, and `SessionAuthentication` then enforces CSRF — producing a 403 that
+  reproduces only for whoever visited admin, and never in a fresh browser.
+- With no `SessionAuthentication`, the API has no CSRF check at all. DRF wraps every
+  view in `csrf_exempt` (`rest_framework/views.py`) and CSRF is enforced solely by
+  that class. So `client.ts` sends no tokens, no cookies, and a write is one round
+  trip. `CsrfViewMiddleware` stays in `MIDDLEWARE` for the admin's own forms.
 
 ## Testing
 

@@ -7,29 +7,20 @@
  *
  * To add a resource, create the module and re-export it below:
  *
- *     // src/lib/api/tasks.ts
- *     import { api, type Paginated, type RequestOptions } from './client';
+ *     // src/lib/api/todos.ts
+ *     import { api, type RequestOptions } from './client';
  *
- *     export interface Task {
+ *     export interface Todo {
  *         id: number;
- *         name: string;
- *         status: 'ACTIVE' | 'COMPLETE';
+ *         title: string;
+ *         completed: boolean;
+ *         parentId: number | null;
  *     }
  *
- *     export function listTasks(options?: RequestOptions) {
- *         return api.get<Paginated<Task>>('/tasks/', options);
- *     }
- *
- *     export function createTask(payload: Partial<Task>, options?: RequestOptions) {
- *         return api.post<Task>('/tasks/', payload, options);
- *     }
- *
- *     export function deleteTask(id: number, options?: RequestOptions) {
- *         return api.del(`/tasks/${id}/`, options);
+ *     export function listTodos(options?: RequestOptions) {
+ *         return api.get<Todo[]>('/todos/', options);
  *     }
  */
 
-export { api, ApiError, clearCsrfToken, ensureCsrfToken } from './client';
+export { api, ApiError } from './client';
 export type { Paginated, RequestOptions } from './client';
-
-export * from './auth';

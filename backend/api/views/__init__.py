@@ -10,18 +10,13 @@ Two view styles are in play, deliberately:
     router line yields list/detail/create/update/delete, so there is no hand-written
     URL per operation and no chance of them drifting apart.
 
-  * `@api_view` functions for anything that isn't CRUD -- logging in, an action that
-    spans several models, a report. Forcing those into a ViewSet costs more than it
-    saves.
+  * `@api_view` functions for anything that isn't CRUD -- a health probe, an action
+    that spans several models, a report. Forcing those into a ViewSet costs more than
+    it saves.
 """
 
-from .auth import check_session, csrf_token, login_view, logout_view
 from .health import health
 
 __all__ = [
     "health",
-    "csrf_token",
-    "login_view",
-    "logout_view",
-    "check_session",
 ]

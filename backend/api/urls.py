@@ -20,11 +20,6 @@ router = DefaultRouter()
 
 urlpatterns = [
     path("health/", views.health, name="health"),
-    # --- Session auth ---
-    path("auth/csrf/", views.csrf_token, name="csrf"),
-    path("auth/login/", views.login_view, name="login"),
-    path("auth/logout/", views.logout_view, name="logout"),
-    path("auth/check/", views.check_session, name="check-session"),
     # --- Router-generated CRUD ---
     path("", include(router.urls)),
 ]

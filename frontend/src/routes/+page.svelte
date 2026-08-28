@@ -3,8 +3,7 @@
 
 	Proves the whole stack is wired: Tailwind and the shadcn theme render, a
 	server-side load function reached Django before this page was sent, and a
-	browser-side call reaches it too. Replace the body once the challenge starts, but
-	keep a health check around until the API is definitely reachable.
+	browser-side call reaches it too. This gets replaced by the todo UI.
 -->
 <script lang="ts">
 	import { api, ApiError } from '$lib/api';
@@ -62,9 +61,7 @@
 			<div class="flex items-center gap-3">
 				<span class="text-sm text-muted-foreground">Server-side load:</span>
 				{#if data.apiReachable}
-					<Badge variant="secondary">
-						reached API — {data.session.authenticated ? 'signed in' : 'signed out'}
-					</Badge>
+					<Badge variant="secondary">reached API — {data.apiStatus}</Badge>
 				{:else}
 					<Badge variant="destructive">{data.apiError}</Badge>
 				{/if}
